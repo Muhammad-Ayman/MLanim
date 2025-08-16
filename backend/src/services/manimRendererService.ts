@@ -616,13 +616,15 @@ export class ManimRendererService {
             foundFile: anyMp4,
             allFiles: files,
           });
-          return path.join(outputDir, anyMp4);
+          // Return just the filename for static file serving
+          return anyMp4;
         }
 
         throw new Error(`No video file found. Available files: ${files.join(', ')}`);
       }
 
-      return path.join(outputDir, videoFile);
+      // Return just the filename for static file serving
+      return videoFile;
     } catch (error) {
       logger.error('Failed to find video file', { outputDir, error });
       throw new Error(`Failed to find video file: ${error}`);
