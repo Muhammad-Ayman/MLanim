@@ -484,6 +484,53 @@ export class JobQueueService {
   }
 
   /**
+   * Delete a job completely from the system
+   */
+  async deleteJob(jobId: string): Promise<void> {
+    try {
+      const job = await this.queue.getJob(jobId);
+      if (!job) {
+        logger.warn('Job not found for deletion', { jobId });
+        return;
+      }
+
+      const currentState = await job.getState();
+      logger.info('Deleting job completely', { jobId, currentState });
+
+      try {
+        // Remove the job completely from the queue
+        await job.remove();
+        logger.info('Job deleted successfully', { jobId, previousState: currentState });
+      } catch (removeError) {
+        logger.warn('Failed to remove job, trying to discard', {
+          jobId,
+          currentState,
+          removeError,
+        });
+
+        // If remove fails, try to discard
+        try {
+          await job.discard();
+          logger.info('Job discarded successfully', { jobId, previousState: currentState });
+        } catch (discardError) {
+          logger.error('Failed to discard job', { jobId, currentState, discardError });
+          throw new Error(
+            `Failed to delete job: ${discardError instanceof Error ? discardError.message : 'Unknown error'}`
+          );
+        }
+      }
+
+      // Clean up associated resources
+      await this.cleanupJobResources(jobId);
+    } catch (error) {
+      logger.error('Failed to delete job', { jobId, error });
+      throw new Error(
+        `Failed to delete job: ${error instanceof Error ? error.message : 'Unknown error'}`
+      );
+    }
+  }
+
+  /**
    * Force kill a stuck job
    */
   async forceKillJob(jobId: string): Promise<void> {
@@ -531,6 +578,62 @@ export class JobQueueService {
       throw new Error(
         `Failed to force kill job: ${error instanceof Error ? error.message : 'Unknown error'}`
       );
+    }
+  }
+
+  /**
+   * Clean up all resources associated with a job
+   */
+  private async cleanupJobResources(jobId: string): Promise<void> {
+    try {
+      // Clean up Docker containers
+      await this.cleanupStuckContainers(jobId);
+
+      // Clean up Redis data
+      const outputKey = `manim:output:${jobId}`;
+      await this.redis.del(outputKey);
+      logger.debug('Cleaned up Redis data for job', { jobId });
+
+      // Clean up file system resources
+      await this.cleanupJobFiles(jobId);
+    } catch (error) {
+      logger.warn('Failed to cleanup some job resources', { jobId, error });
+    }
+  }
+
+  /**
+   * Clean up file system resources for a job
+   */
+  private async cleanupJobFiles(jobId: string): Promise<void> {
+    try {
+      const { exec } = require('child_process');
+      const util = require('util');
+      const execAsync = util.promisify(exec);
+      const path = require('path');
+
+      // Clean up output directory
+      const outputDir = path.join(process.cwd(), 'outputs', jobId);
+      try {
+        await execAsync(`rm -rf "${outputDir}"`);
+        logger.debug('Cleaned up output directory', { jobId, outputDir });
+      } catch (error) {
+        logger.debug('Output directory cleanup failed (may not exist)', {
+          jobId,
+          outputDir,
+          error,
+        });
+      }
+
+      // Clean up temp directory
+      const tempDir = path.join(process.cwd(), 'temp', jobId);
+      try {
+        await execAsync(`rm -rf "${tempDir}"`);
+        logger.debug('Cleaned up temp directory', { jobId, tempDir });
+      } catch (error) {
+        logger.debug('Temp directory cleanup failed (may not exist)', { jobId, tempDir, error });
+      }
+    } catch (error) {
+      logger.warn('Failed to cleanup job files', { jobId, error });
     }
   }
 

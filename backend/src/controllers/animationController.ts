@@ -391,6 +391,37 @@ export class AnimationController {
   }
 
   /**
+   * Delete a job completely from the system
+   */
+  async deleteJob(req: Request, res: Response): Promise<void> {
+    try {
+      const { id } = req.params;
+
+      if (!id) {
+        res.status(400).json({
+          message: 'Job ID is required',
+          code: 'MISSING_JOB_ID',
+        });
+        return;
+      }
+
+      await this.jobQueueService.deleteJob(id);
+
+      res.status(200).json({
+        message: 'Job deleted successfully',
+        jobId: id,
+      });
+    } catch (error) {
+      logger.error('Failed to delete job', { error, jobId: req.params.id });
+      res.status(500).json({
+        message: 'Failed to delete job',
+        code: 'DELETE_FAILED',
+        details: error instanceof Error ? error.message : 'Unknown error',
+      });
+    }
+  }
+
+  /**
    * Force kill a stuck job
    */
   async forceKillJob(req: Request, res: Response): Promise<void> {

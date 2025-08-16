@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Play, Square, Eye, AlertTriangle, CheckCircle, Clock, XCircle } from 'lucide-react';
+import { Play, Square, Eye, AlertTriangle, CheckCircle, Clock, XCircle, Trash2 } from 'lucide-react';
 
 interface Process {
   id: string;
@@ -100,6 +100,30 @@ const ProcessManager: React.FC = () => {
   // Manual refresh
   const handleRefresh = () => {
     fetchAllData();
+  };
+
+  // Handle job deletion
+  const handleDeleteJob = async (jobId: string) => {
+    if (!window.confirm('Are you sure you want to delete this job? This action cannot be undone and will remove all associated files and data.')) {
+      return;
+    }
+
+    try {
+      const response = await fetch(`/api/animations/delete/${jobId}`, {
+        method: 'DELETE',
+      });
+
+      if (response.ok) {
+        alert('Job deleted successfully!');
+        fetchAllData(); // Refresh the data
+      } else {
+        const errorData = await response.json();
+        alert(`Failed to delete job: ${errorData.message || 'Unknown error'}`);
+      }
+    } catch (error) {
+      console.error('Failed to delete job:', error);
+      alert(`Failed to delete job: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
   };
 
   // Kill a specific process
@@ -283,6 +307,15 @@ const ProcessManager: React.FC = () => {
                 >
                   <Square className="w-4 h-4" />
                 </button>
+                {process.type === 'job' && (
+                  <button
+                    onClick={() => handleDeleteJob(process.id)}
+                    className="p-1 text-red-600 hover:text-red-800"
+                    title="Delete Job"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                )}
               </div>
             </div>
 

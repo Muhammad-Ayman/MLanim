@@ -80,6 +80,22 @@ router.get(
   animationController.getLiveProgress.bind(animationController)
 );
 
+// Delete a job completely
+router.delete(
+  '/delete/:id',
+  rateLimit({
+    windowMs: 1 * 60 * 1000, // 1 minute
+    max: 10, // Limit each IP to 10 delete requests per minute
+    message: {
+      message: 'Too many delete requests from this IP, please try again later.',
+      code: 'RATE_LIMIT_EXCEEDED',
+    },
+    standardHeaders: true,
+    legacyHeaders: false,
+  }),
+  animationController.deleteJob.bind(animationController)
+);
+
 // Force kill a stuck job
 router.post(
   '/kill/:id',

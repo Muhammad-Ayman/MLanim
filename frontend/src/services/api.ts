@@ -69,6 +69,21 @@ export class AnimationApiService {
   }
 
   /**
+   * Delete a job completely
+   */
+  static async deleteJob(jobId: string): Promise<{ message: string }> {
+    try {
+      const response = await api.delete<{ message: string }>(`/animations/delete/${jobId}`);
+      return response.data;
+    } catch (error) {
+      if (axios.isAxiosError(error) && error.response?.data) {
+        throw new Error(error.response.data.message || 'Failed to delete job');
+      }
+      throw new Error('Network error occurred');
+    }
+  }
+
+  /**
    * Get Manim outputs for a job
    */
   static async getManimOutputs(jobId: string): Promise<{ outputs: any[] }> {

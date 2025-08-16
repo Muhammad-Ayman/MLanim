@@ -1,5 +1,14 @@
 import React, { useState, useEffect } from 'react';
-import { Clock, Play, CheckCircle, XCircle, Download, ChevronDown, ChevronUp } from 'lucide-react';
+import {
+  Clock,
+  Play,
+  CheckCircle,
+  XCircle,
+  Download,
+  ChevronDown,
+  ChevronUp,
+  Trash2,
+} from 'lucide-react';
 import { clsx } from 'clsx';
 import { JobStatus } from '../types';
 import { AnimationApiService } from '../services/api';
@@ -48,6 +57,34 @@ export const StatusDisplay: React.FC<StatusDisplayProps> = ({ jobStatus, onDownl
   const [manimOutputs, setManimOutputs] = useState<any[]>([]);
   const [showOutputs, setShowOutputs] = useState(false);
   const [isLoadingOutputs, setIsLoadingOutputs] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
+
+  // Handle job deletion
+  const handleDelete = async () => {
+    if (!jobStatus?.id) return;
+
+    if (
+      !window.confirm(
+        'Are you sure you want to delete this job? This action cannot be undone and will remove all associated files and data.'
+      )
+    ) {
+      return;
+    }
+
+    try {
+      setIsDeleting(true);
+      await AnimationApiService.deleteJob(jobStatus.id);
+
+      // Show success message and refresh the page
+      alert('Job deleted successfully!');
+      window.location.reload();
+    } catch (error) {
+      console.error('Failed to delete job:', error);
+      alert(`Failed to delete job: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    } finally {
+      setIsDeleting(false);
+    }
+  };
 
   // Fetch Manim outputs when job is running
   useEffect(() => {
@@ -205,6 +242,16 @@ export const StatusDisplay: React.FC<StatusDisplayProps> = ({ jobStatus, onDownl
                 Try Again
               </button>
             )}
+
+            {/* Delete button - available for all job statuses */}
+            <button
+              onClick={handleDelete}
+              disabled={isDeleting}
+              className="btn-secondary flex items-center gap-2 text-red-600 hover:text-red-700 hover:bg-red-50"
+            >
+              <Trash2 className="w-4 h-4" />
+              {isDeleting ? 'Deleting...' : 'Delete Job'}
+            </button>
           </div>
 
           {/* Job info */}
