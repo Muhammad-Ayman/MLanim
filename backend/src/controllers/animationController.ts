@@ -62,11 +62,8 @@ export class AnimationController {
       const jobId = await this.jobQueueService.addJob({
         prompt: prompt.trim(),
         code: geminiResponse.code,
-        status: 'pending',
         outputPath: undefined,
         error: undefined,
-        createdAt: new Date(),
-        updatedAt: new Date(),
       });
 
       logger.info('Animation generation job queued successfully', {
@@ -177,6 +174,37 @@ export class AnimationController {
         message: 'Failed to retrieve jobs',
         code: 'JOBS_RETRIEVAL_FAILED',
         details: errorMessage,
+      });
+    }
+  }
+
+  /**
+   * Force kill a stuck job
+   */
+  async forceKillJob(req: Request, res: Response): Promise<void> {
+    try {
+      const { id } = req.params;
+
+      if (!id) {
+        res.status(400).json({
+          message: 'Job ID is required',
+          code: 'MISSING_JOB_ID',
+        });
+        return;
+      }
+
+      await this.jobQueueService.forceKillJob(id);
+
+      res.status(200).json({
+        message: 'Job force killed successfully',
+        jobId: id,
+      });
+    } catch (error) {
+      logger.error('Failed to force kill job', { error, jobId: req.params.id });
+      res.status(500).json({
+        message: 'Failed to force kill job',
+        code: 'FORCE_KILL_FAILED',
+        details: error instanceof Error ? error.message : 'Unknown error',
       });
     }
   }
