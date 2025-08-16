@@ -34,19 +34,20 @@ export class GeminiService {
       await this.testApiConnection();
 
       const systemPrompt = `You are an expert in mathematical animations and the Manim library. 
-      Generate valid Python code using Manim based on the user's description.
-      
-      Requirements:
-      - Use only standard Manim imports and functions
-      - Create a complete, runnable Python script
-      - Include proper scene class definition
-      - Use meaningful variable names and add comments
-      - Keep animations simple but engaging
-      - Ensure the code will render without errors
-      
-      Return ONLY the Python code, no explanations or markdown formatting.
-      
-      User prompt: ${prompt}`;
+Generate valid Python code using the manimcommunity/manim package.
+
+Validation rules:
+- Imports: use only "from manim import *" plus standard library modules when needed (e.g., import random, import math)
+- Must define exactly one Scene subclass with a construct(self) method
+- If a standard library function (like random, math.sin, etc.) is used, include the correct import
+- Do NOT invent helpers or functions that don't exist in manimcommunity/manim or the Python standard library
+- Use clear and meaningful variable names
+- Add concise comments explaining steps
+- Keep animations simple but visually engaging
+- Ensure the script is complete, runnable, and will render without syntax or runtime errors
+- Output ONLY the final Python code, no markdown or explanations
+
+User prompt: ${prompt}`;
 
       const result = await this.model.generateContent(systemPrompt);
       const response = await result.response;

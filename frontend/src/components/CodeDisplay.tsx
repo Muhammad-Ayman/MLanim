@@ -1,5 +1,7 @@
 import React, { useState } from 'react';
 import { Copy, Check } from 'lucide-react';
+import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
+import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism';
 
 interface CodeDisplayProps {
   code: string;
@@ -24,30 +26,6 @@ const CodeDisplay: React.FC<CodeDisplayProps> = ({
     } catch (error) {
       console.error('Failed to copy code:', error);
     }
-  };
-
-  // Simple syntax highlighting for Python/Manim code using inline styles
-  const highlightCode = (code: string): string => {
-    return code
-      .replace(
-        /\b(import|from|class|def|if|else|elif|for|while|try|except|finally|with|as|return|yield|break|continue|pass|raise|assert|del|global|nonlocal|lambda|and|or|not|is|in|True|False|None)\b/g,
-        '<span style="color: #2563eb; font-weight: 600;">$1</span>'
-      )
-      .replace(/\b(self|cls)\b/g, '<span style="color: #9333ea; font-weight: 600;">$1</span>')
-      .replace(
-        /\b(Scene|Circle|Square|Rectangle|Line|Text|NumberPlane|Axes|Graph|VGroup|Animation|Create|Write|ShowCreation|FadeIn|FadeOut|Transform|MoveToTarget|GrowFromCenter|ShrinkToCenter|Rotate|Scale|Shift|ApplyMethod|Wait|UpdateFromFunc|AnimationGroup|Succession|LaggedStart|LaggedStartMap|TransformFromCopy|CopyFromCopy|ReplacementTransform|TransformMatchingParts|TransformMatchingTex|FadeTransform|FadeTransformPieces|ClockwiseTransform|CounterclockwiseTransform)\b/g,
-        '<span style="color: #16a34a; font-weight: 600;">$1</span>'
-      )
-      .replace(
-        /\b(UP|DOWN|LEFT|RIGHT|ORIGIN|PI|TAU|E|INF|NEG_INF)\b/g,
-        '<span style="color: #ea580c; font-weight: 600;">$1</span>'
-      )
-      .replace(/\b(\d+\.?\d*)\b/g, '<span style="color: #dc2626;">$1</span>')
-      .replace(/(#.*$)/gm, '<span style="color: #6b7280; font-style: italic;">$1</span>')
-      .replace(
-        /("""[\s\S]*?"""|'''[\s\S]*?'''|"[^"]*"|'[^']*')/g,
-        '<span style="color: #ca8a04;">$1</span>'
-      );
   };
 
   return (
@@ -82,27 +60,39 @@ const CodeDisplay: React.FC<CodeDisplayProps> = ({
         </button>
       </div>
 
-      {/* Code content */}
+      {/* Code content with syntax highlighting */}
       <div className="relative">
-        {/* Line numbers */}
-        <div className="absolute left-0 top-0 bottom-0 w-12 bg-gray-800 text-right text-gray-500 text-sm select-none">
-          {code.split('\n').map((_, index) => (
-            <div key={index} className="px-2 py-0.5">
-              {index + 1}
-            </div>
-          ))}
-        </div>
-
-        {/* Code with syntax highlighting */}
-        <div className="ml-12 p-4 overflow-x-auto">
-          <pre className="text-sm text-gray-100 font-mono leading-relaxed">
-            <code
-              dangerouslySetInnerHTML={{
-                __html: highlightCode(code),
-              }}
-            />
-          </pre>
-        </div>
+        <SyntaxHighlighter
+          language={language}
+          style={oneDark}
+          customStyle={{
+            margin: 0,
+            borderRadius: 0,
+            fontSize: '14px',
+            lineHeight: '1.5',
+            padding: '16px',
+            paddingLeft: '64px', // Space for line numbers
+            backgroundColor: '#1a1a1a',
+          }}
+          showLineNumbers={true}
+          lineNumberStyle={{
+            color: '#6b7280',
+            backgroundColor: '#374151',
+            paddingRight: '16px',
+            minWidth: '48px',
+            textAlign: 'right',
+            userSelect: 'none',
+          }}
+          wrapLines={true}
+          lineProps={{
+            style: {
+              wordBreak: 'break-all',
+              whiteSpace: 'pre-wrap',
+            },
+          }}
+        >
+          {code}
+        </SyntaxHighlighter>
       </div>
 
       {/* Footer */}
