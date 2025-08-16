@@ -128,8 +128,6 @@ export class ManimRendererService {
         '2',
         '--network',
         'none', // Isolate network
-        '--user',
-        '1000:1000', // Run as non-root user to avoid permission issues
         '--tmpfs',
         '/tmp:rw,noexec,nosuid,size=500m', // Increased temp space
         '--tmpfs',
@@ -153,11 +151,39 @@ export class ManimRendererService {
         '--flush_cache', // Flush cache before rendering
       ];
 
+      // Add user mapping to run as host user (Unix systems only)
+      if (process.platform !== 'win32') {
+        try {
+          // Get current user ID and group ID
+          const { uid: currentUid, gid: currentGid } = this.getCurrentUserIds();
+
+          // Insert user mapping after --network
+          dockerArgs.splice(6, 0, '--user', `${currentUid}:${currentGid}`);
+
+          logger.debug('Added user mapping for Docker container', {
+            uid: currentUid,
+            gid: currentGid,
+            jobId,
+          });
+        } catch (error) {
+          logger.warn('Failed to get user ID, running without user mapping', {
+            error,
+            jobId,
+          });
+        }
+      }
+
       // On retry attempts, try different permission strategies
       if (attempt > 1) {
         // Remove user restriction on retry to try root access
-        dockerArgs.splice(dockerArgs.indexOf('--user'), 2);
-        logger.debug('Retrying without user restriction for permission issues', { jobId, attempt });
+        const userIndex = dockerArgs.indexOf('--user');
+        if (userIndex !== -1) {
+          dockerArgs.splice(userIndex, 2);
+          logger.debug('Retrying without user restriction for permission issues', {
+            jobId,
+            attempt,
+          });
+        }
       }
 
       const dockerProcess = spawn('docker', dockerArgs, {
@@ -433,6 +459,33 @@ export class ManimRendererService {
   }
 
   /**
+   * Get current user ID and group ID for Docker user mapping
+   */
+  private getCurrentUserIds(): { uid: string; gid: string } {
+    try {
+      if (process.platform !== 'win32') {
+        const { execSync } = require('child_process');
+
+        try {
+          const uid = execSync('id -u', { encoding: 'utf8' }).trim();
+          const gid = execSync('id -g', { encoding: 'utf8' }).trim();
+          return { uid, gid };
+        } catch (error) {
+          logger.warn('Failed to get user ID via execSync, using environment variables', { error });
+        }
+      }
+
+      // Fallback to environment variables or defaults
+      const uid = process.env.USER_ID || process.env.UID || '1000';
+      const gid = process.env.GROUP_ID || process.env.GID || uid;
+      return { uid, gid };
+    } catch (error) {
+      logger.warn('Failed to get user IDs, using defaults', { error });
+      return { uid: '1000', gid: '1000' };
+    }
+  }
+
+  /**
    * Ensure directories have proper permissions for Docker mounting
    */
   private async ensureDirectoryPermissions(tempDir: string, outputDir: string): Promise<void> {
@@ -444,16 +497,47 @@ export class ManimRendererService {
         const execAsync = util.promisify(exec);
 
         try {
-          // Make directories writable by all users (for Docker)
-          await execAsync(`chmod -R 777 "${tempDir}"`);
-          await execAsync(`chmod -R 777 "${outputDir}"`);
-          logger.debug('Set directory permissions for Docker mounting', { tempDir, outputDir });
+          // Get current user ID and group ID
+          const { uid: currentUid, gid: currentGid } = this.getCurrentUserIds();
+
+          logger.debug('Current user ID and group ID', { uid: currentUid, gid: currentGid });
+
+          // Make directories owned by current user and writable
+          await execAsync(`chown -R ${currentUid}:${currentGid} "${tempDir}"`);
+          await execAsync(`chown -R ${currentUid}:${currentGid} "${outputDir}"`);
+
+          // Set permissions to 755 (rwxr-xr-x) for directories
+          await execAsync(`chmod -R 755 "${tempDir}"`);
+          await execAsync(`chmod -R 755 "${outputDir}"`);
+
+          // Ensure output directory is writable by owner
+          await execAsync(`chmod -R 775 "${outputDir}"`);
+
+          logger.debug('Set directory ownership and permissions for Docker mounting', {
+            tempDir,
+            outputDir,
+            uid: currentUid,
+            gid: currentGid,
+          });
         } catch (chmodError) {
-          logger.warn('Failed to set directory permissions, continuing anyway', {
+          logger.warn('Failed to set directory permissions, trying fallback', {
             tempDir,
             outputDir,
             error: chmodError,
           });
+
+          // Fallback: try to make directories writable by all users
+          try {
+            await execAsync(`chmod -R 777 "${tempDir}"`);
+            await execAsync(`chmod -R 777 "${outputDir}"`);
+            logger.debug('Applied fallback permissions (777)', { tempDir, outputDir });
+          } catch (fallbackError) {
+            logger.warn('Fallback permissions also failed', {
+              tempDir,
+              outputDir,
+              error: fallbackError,
+            });
+          }
         }
       }
     } catch (error) {

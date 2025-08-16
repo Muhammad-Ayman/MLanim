@@ -25,7 +25,8 @@ const statusConfig = {
     bgColor: 'bg-yellow-50',
     borderColor: 'border-yellow-200',
     text: 'Pending',
-    description: 'Your animation is queued and waiting to be processed...',
+    description:
+      'Your animation is queued and waiting to be processed. Manim output will appear here once processing begins.',
   },
   running: {
     icon: Play,
@@ -132,83 +133,101 @@ export const StatusDisplay: React.FC<StatusDisplayProps> = ({ jobStatus, onDownl
 
           <p className="text-gray-700 mb-4">{config.description}</p>
 
-          {/* Progress bar for running status */}
-          {jobStatus.status === 'running' && (
-            <div className="mb-4">
-              <div className="flex justify-between text-sm text-gray-600 mb-1">
-                <span>Progress</span>
-                <span>{jobStatus.progress || 0}%</span>
-              </div>
-              <div className="w-full bg-gray-200 rounded-full h-2">
-                <div
-                  className="bg-blue-600 h-2 rounded-full transition-all duration-500 ease-out"
-                  style={{ width: `${jobStatus.progress || 0}%` }}
-                />
-              </div>
+          {/* Progress bar and current operation - Show for all statuses */}
+          <div className="mb-4">
+            {/* Progress bar for running status */}
+            {jobStatus.status === 'running' && (
+              <>
+                <div className="flex justify-between text-sm text-gray-600 mb-1">
+                  <span>Progress</span>
+                  <span>{jobStatus.progress || 0}%</span>
+                </div>
+                <div className="w-full bg-gray-200 rounded-full h-2">
+                  <div
+                    className="bg-blue-600 h-2 rounded-full transition-all duration-500 ease-out"
+                    style={{ width: `${jobStatus.progress || 0}%` }}
+                  />
+                </div>
+              </>
+            )}
 
-              {/* Current Manim Operation */}
-              {manimOutputs.length > 0 && (
-                <div className="mt-2 text-sm text-gray-600">
-                  <span className="font-medium">Current:</span>{' '}
-                  {manimOutputs[manimOutputs.length - 1]?.data || 'Initializing...'}
+            {/* Current Manim Operation - Always Show */}
+            <div className="mt-2 text-sm text-gray-600">
+              <span className="font-medium">Current Operation:</span>{' '}
+              {manimOutputs.length > 0 ? (
+                <span className="text-blue-600">{manimOutputs[manimOutputs.length - 1]?.data}</span>
+              ) : (
+                <span className="text-gray-500">
+                  {jobStatus.status === 'pending' ? 'Waiting in queue...' : 'Initializing...'}
+                </span>
+              )}
+              {/* Queue position indicator for pending jobs */}
+              {jobStatus.status === 'pending' && (
+                <div className="mt-1 text-xs text-yellow-600 bg-yellow-50 px-2 py-1 rounded">
+                  ⏳ Job is queued and will start processing soon
                 </div>
               )}
             </div>
-          )}
+          </div>
 
-          {/* Real-time Manim Output Display */}
-          {(jobStatus.status === 'running' || jobStatus.status === 'done') &&
-            manimOutputs.length > 0 && (
-              <div className="mb-4">
-                <button
-                  onClick={() => setShowOutputs(!showOutputs)}
-                  className="flex items-center gap-2 text-sm text-gray-600 hover:text-gray-800 mb-2"
-                >
-                  {showOutputs ? (
-                    <ChevronUp className="w-4 h-4" />
-                  ) : (
-                    <ChevronDown className="w-4 h-4" />
-                  )}
-                  <span>Manim Output ({manimOutputs.length})</span>
-                  {isLoadingOutputs && (
-                    <div className="w-4 h-4 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
-                  )}
-                </button>
+          {/* Real-time Manim Output Display - Always Show */}
+          <div className="mb-4">
+            <button
+              onClick={() => setShowOutputs(!showOutputs)}
+              className="flex items-center gap-2 text-sm text-gray-600 hover:text-gray-800 mb-2"
+            >
+              {showOutputs ? (
+                <ChevronUp className="w-4 h-4" />
+              ) : (
+                <ChevronDown className="w-4 h-4" />
+              )}
+              <span>Manim Output ({manimOutputs.length})</span>
+              {isLoadingOutputs && (
+                <div className="w-4 h-4 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
+              )}
+            </button>
 
-                {showOutputs && (
-                  <div className="bg-gray-50 border border-gray-200 rounded-lg p-3 max-h-64 overflow-y-auto">
-                    <div className="space-y-2">
-                      {manimOutputs.slice(-20).map((output, index) => (
-                        <div key={index} className="text-xs font-mono">
-                          <span className="text-gray-500">
-                            [{new Date(output.timestamp).toLocaleTimeString()}]
-                          </span>
-                          <span
-                            className={clsx(
-                              'ml-2',
-                              output.type === 'progress'
-                                ? 'text-blue-600 font-medium'
-                                : output.type === 'stderr'
-                                  ? 'text-red-600'
-                                  : output.type === 'stdout'
-                                    ? 'text-gray-700'
-                                    : 'text-gray-600'
-                            )}
-                          >
-                            {output.data}
-                          </span>
-                        </div>
-                      ))}
-                    </div>
-                    {manimOutputs.length > 20 && (
-                      <div className="text-xs text-gray-500 mt-2 text-center">
-                        Showing last 20 outputs of {manimOutputs.length} total
+            {showOutputs && (
+              <div className="bg-gray-50 border border-gray-200 rounded-lg p-3 max-h-64 overflow-y-auto">
+                {manimOutputs.length > 0 ? (
+                  <div className="space-y-2">
+                    {manimOutputs.slice(-20).map((output, index) => (
+                      <div key={index} className="text-xs font-mono">
+                        <span className="text-gray-500">
+                          [{new Date(output.timestamp).toLocaleTimeString()}]
+                        </span>
+                        <span
+                          className={clsx(
+                            'ml-2',
+                            output.type === 'progress'
+                              ? 'text-blue-600 font-medium'
+                              : output.type === 'stderr'
+                                ? 'text-red-600'
+                                : output.type === 'stdout'
+                                  ? 'text-gray-700'
+                                  : 'text-gray-600'
+                          )}
+                        >
+                          {output.data}
+                        </span>
                       </div>
-                    )}
+                    ))}
+                  </div>
+                ) : (
+                  <div className="text-gray-500 text-center py-4">
+                    {jobStatus.status === 'pending'
+                      ? 'Waiting for Manim output... Output will appear here once processing begins.'
+                      : 'No Manim output yet. Output will appear here as the animation processes.'}
+                  </div>
+                )}
+                {manimOutputs.length > 20 && (
+                  <div className="text-xs text-gray-500 mt-2 text-center">
+                    Showing last 20 outputs of {manimOutputs.length} total
                   </div>
                 )}
               </div>
             )}
+          </div>
 
           {/* Error details */}
           {jobStatus.status === 'error' && jobStatus.error && (

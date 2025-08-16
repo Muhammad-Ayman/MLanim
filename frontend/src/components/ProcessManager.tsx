@@ -1,5 +1,17 @@
 import { useState, useEffect } from 'react';
-import { Play, Square, Eye, AlertTriangle, CheckCircle, Clock, XCircle, Trash2 } from 'lucide-react';
+import {
+  Play,
+  Square,
+  Eye,
+  AlertTriangle,
+  CheckCircle,
+  Clock,
+  XCircle,
+  Trash2,
+  ChevronDown,
+  ChevronUp,
+} from 'lucide-react';
+import { AnimationApiService } from '../services/api';
 
 interface Process {
   id: string;
@@ -22,6 +34,88 @@ interface Job {
   updatedAt: string;
   error?: string;
 }
+
+// Manim Output Display Component
+const ManimOutputDisplay: React.FC<{ jobId: string }> = ({ jobId }) => {
+  const [manimOutputs, setManimOutputs] = useState<any[]>([]);
+  const [showOutputs, setShowOutputs] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
+
+  useEffect(() => {
+    const fetchOutputs = async () => {
+      try {
+        setIsLoading(true);
+        const response = await AnimationApiService.getManimOutputs(jobId);
+        if (response.outputs) {
+          setManimOutputs(response.outputs);
+        }
+      } catch (error) {
+        console.error('Failed to fetch Manim outputs:', error);
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    fetchOutputs();
+
+    // Poll for updates every 3 seconds
+    const interval = setInterval(fetchOutputs, 3000);
+    return () => clearInterval(interval);
+  }, [jobId]);
+
+  return (
+    <div>
+      <button
+        onClick={() => setShowOutputs(!showOutputs)}
+        className="flex items-center gap-2 text-sm text-gray-600 hover:text-gray-800 mb-2"
+      >
+        {showOutputs ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+        <span>Manim Output ({manimOutputs.length})</span>
+        {isLoading && (
+          <div className="w-4 h-4 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
+        )}
+      </button>
+
+      {showOutputs && (
+        <div className="bg-gray-50 border border-gray-200 rounded-lg p-3 max-h-48 overflow-y-auto">
+          {manimOutputs.length > 0 ? (
+            <div className="space-y-2">
+              {manimOutputs.slice(-15).map((output, index) => (
+                <div key={index} className="text-xs font-mono">
+                  <span className="text-gray-500">
+                    [{new Date(output.timestamp).toLocaleTimeString()}]
+                  </span>
+                  <span
+                    className={`ml-2 ${
+                      output.type === 'progress'
+                        ? 'text-blue-600 font-medium'
+                        : output.type === 'stderr'
+                          ? 'text-red-600'
+                          : output.type === 'stdout'
+                            ? 'text-gray-700'
+                            : 'text-gray-600'
+                    }`}
+                  >
+                    {output.data}
+                  </span>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="text-gray-500 text-center py-4">
+              No Manim output yet. Output will appear here as the animation processes.
+            </div>
+          )}
+          {manimOutputs.length > 15 && (
+            <div className="text-xs text-gray-500 mt-2 text-center">
+              Showing last 15 outputs of {manimOutputs.length} total
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+};
 
 const ProcessManager: React.FC = () => {
   const [processes, setProcesses] = useState<Process[]>([]);
@@ -104,7 +198,11 @@ const ProcessManager: React.FC = () => {
 
   // Handle job deletion
   const handleDeleteJob = async (jobId: string) => {
-    if (!window.confirm('Are you sure you want to delete this job? This action cannot be undone and will remove all associated files and data.')) {
+    if (
+      !window.confirm(
+        'Are you sure you want to delete this job? This action cannot be undone and will remove all associated files and data.'
+      )
+    ) {
       return;
     }
 
@@ -335,6 +433,16 @@ const ProcessManager: React.FC = () => {
                 </div>
               )}
 
+              {/* Current operation for jobs */}
+              {process.type === 'job' && (
+                <div className="text-xs text-gray-500">
+                  <span className="font-medium">Status:</span> {process.status}
+                  {process.status === 'pending' && (
+                    <span className="ml-2 text-yellow-600">⏳ Queued</span>
+                  )}
+                </div>
+              )}
+
               {/* Resource usage for Docker containers */}
               {process.type === 'docker' && (
                 <div className="text-xs text-gray-500 space-y-1">
@@ -424,6 +532,12 @@ const ProcessManager: React.FC = () => {
                           {selectedProcess.details.error}
                         </p>
                       )}
+                    </div>
+
+                    {/* Manim Output Display */}
+                    <div className="border-t pt-4 mt-4">
+                      <h3 className="font-medium text-gray-900 mb-2">Manim Output</h3>
+                      <ManimOutputDisplay jobId={selectedProcess.id} />
                     </div>
                   </div>
                 )}
