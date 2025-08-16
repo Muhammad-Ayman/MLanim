@@ -106,5 +106,8 @@ temp/
 # Redis dump
 dump.rdb
 
+
+*.mp4
+
 # TypeScript
 *.tsbuildinfo
