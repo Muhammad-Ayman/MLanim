@@ -10,6 +10,12 @@ interface RenderResult {
   duration: number;
 }
 
+interface ManimOutput {
+  type: 'stdout' | 'stderr' | 'progress' | 'info';
+  data: string;
+  timestamp: Date;
+}
+
 export class ManimRendererService {
   private readonly dockerImage = 'manimcommunity/manim:latest';
   private readonly containerTimeout = 300000; // 5 minutes - increased for complex animations
@@ -17,7 +23,11 @@ export class ManimRendererService {
   /**
    * Render a Manim animation using Docker for safety
    */
-  async renderAnimation(code: string, jobId: string): Promise<RenderResult> {
+  async renderAnimation(
+    code: string,
+    jobId: string,
+    onOutput?: (output: ManimOutput) => void
+  ): Promise<RenderResult> {
     const startTime = Date.now();
     const tempDir = path.join(process.cwd(), 'temp', jobId);
     const outputDir = path.join(process.cwd(), 'outputs', jobId);
@@ -31,7 +41,7 @@ export class ManimRendererService {
       await fs.writeFile(codeFilePath, code, 'utf8');
 
       // Render using Docker
-      const result = await this.renderWithDocker(tempDir, outputDir, jobId);
+      const result = await this.renderWithDocker(tempDir, outputDir, jobId, onOutput);
 
       const duration = Date.now() - startTime;
       logger.info('Animation rendered successfully', {
@@ -61,7 +71,8 @@ export class ManimRendererService {
   private async renderWithDocker(
     tempDir: string,
     outputDir: string,
-    jobId: string
+    jobId: string,
+    onOutput?: (output: ManimOutput) => void
   ): Promise<RenderResult> {
     return new Promise((resolve, reject) => {
       const containerName = `manim-render-${jobId}`;
@@ -151,13 +162,153 @@ export class ManimRendererService {
       }, this.containerTimeout);
 
       dockerProcess.stdout?.on('data', data => {
-        stdout += data.toString();
-        logger.debug('Docker stdout', { jobId, data: data.toString() });
+        const output = data.toString();
+        stdout += output;
+
+        // Parse Manim progress information with more comprehensive patterns
+        const progressMatch = output.match(/Rendering\s+(\d+)\/(\d+)\s+frames/);
+        const sceneMatch = output.match(/Scene\s+(\w+)/);
+        const animationMatch = output.match(/Animation\s+(\d+)\/(\d+)/);
+        const fileMatch = output.match(/Writing\s+(\S+)/);
+        const frameMatch = output.match(/Frame\s+(\d+)/);
+        const timeMatch = output.match(/(\d+\.\d+)s/);
+        const qualityMatch = output.match(/quality\s+(\w+)/i);
+        const formatMatch = output.match(/format\s+(\w+)/i);
+
+        // Additional Manim progress patterns
+        const renderingMatch = output.match(/Rendering\s+(\w+)/);
+        const processingMatch = output.match(/Processing\s+(\w+)/);
+        const buildingMatch = output.match(/Building\s+(\w+)/);
+        const compilingMatch = output.match(/Compiling\s+(\w+)/);
+
+        if (progressMatch) {
+          const currentFrame = parseInt(progressMatch[1]);
+          const totalFrames = parseInt(progressMatch[2]);
+          const progressPercent = Math.round((currentFrame / totalFrames) * 100);
+
+          if (onOutput) {
+            onOutput({
+              type: 'progress',
+              data: `Rendering frame ${currentFrame}/${totalFrames} (${progressPercent}%)`,
+              timestamp: new Date(),
+            });
+          }
+        } else if (sceneMatch) {
+          if (onOutput) {
+            onOutput({
+              type: 'progress',
+              data: `Processing scene: ${sceneMatch[1]}`,
+              timestamp: new Date(),
+            });
+          }
+        } else if (animationMatch) {
+          if (onOutput) {
+            onOutput({
+              type: 'progress',
+              data: `Processing animation ${animationMatch[1]}/${animationMatch[2]}`,
+              timestamp: new Date(),
+            });
+          }
+        } else if (renderingMatch) {
+          if (onOutput) {
+            onOutput({
+              type: 'progress',
+              data: `Rendering: ${renderingMatch[1]}`,
+              timestamp: new Date(),
+            });
+          }
+        } else if (processingMatch) {
+          if (onOutput) {
+            onOutput({
+              type: 'progress',
+              data: `Processing: ${processingMatch[1]}`,
+              timestamp: new Date(),
+            });
+          }
+        } else if (buildingMatch) {
+          if (onOutput) {
+            onOutput({
+              type: 'progress',
+              data: `Building: ${buildingMatch[1]}`,
+              timestamp: new Date(),
+            });
+          }
+        } else if (compilingMatch) {
+          if (onOutput) {
+            onOutput({
+              type: 'progress',
+              data: `Compiling: ${compilingMatch[1]}`,
+              timestamp: new Date(),
+            });
+          }
+        } else if (fileMatch) {
+          if (onOutput) {
+            onOutput({
+              type: 'progress',
+              data: `Writing file: ${fileMatch[1]}`,
+              timestamp: new Date(),
+            });
+          }
+        } else if (frameMatch) {
+          if (onOutput) {
+            onOutput({
+              type: 'progress',
+              data: `Processing frame ${frameMatch[1]}`,
+              timestamp: new Date(),
+            });
+          }
+        } else if (timeMatch) {
+          if (onOutput) {
+            onOutput({
+              type: 'progress',
+              data: `Time elapsed: ${timeMatch[1]}s`,
+              timestamp: new Date(),
+            });
+          }
+        } else if (qualityMatch) {
+          if (onOutput) {
+            onOutput({
+              type: 'info',
+              data: `Quality setting: ${qualityMatch[1]}`,
+              timestamp: new Date(),
+            });
+          }
+        } else if (formatMatch) {
+          if (onOutput) {
+            onOutput({
+              type: 'info',
+              data: `Output format: ${formatMatch[1]}`,
+              timestamp: new Date(),
+            });
+          }
+        }
+
+        // Send stdout output
+        if (onOutput) {
+          onOutput({
+            type: 'stdout',
+            data: output,
+            timestamp: new Date(),
+          });
+        }
+
+        logger.debug('Docker stdout', { jobId, data: output });
       });
 
       dockerProcess.stderr?.on('data', data => {
-        stderr += data.toString();
-        logger.debug('Docker stderr', { jobId, data: data.toString() });
+        const output = data.toString();
+        stderr += output;
+
+        // Send stderr output
+        if (onOutput) {
+          onOutput({
+            type: 'stderr',
+            data: output,
+            timestamp: new Date(),
+          });
+        }
+
+        logger.debug('Docker stderr', { jobId, data: output });
       });
 
       dockerProcess.on('close', async code => {

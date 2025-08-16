@@ -3,6 +3,7 @@ import { Header } from './components/Header';
 import { PromptInput } from './components/PromptInput';
 import { StatusDisplay } from './components/StatusDisplay';
 import ProcessManager from './components/ProcessManager';
+import CodeDisplay from './components/CodeDisplay';
 import { AnimationApiService } from './services/api';
 import { JobStatus } from './types';
 import { AlertCircle, CheckCircle, Sparkles, ExternalLink } from 'lucide-react';
@@ -12,6 +13,7 @@ function App() {
   const [isLoading, setIsLoading] = useState(false);
   const [jobStatus, setJobStatus] = useState<JobStatus | null>(null);
   const [currentJobId, setCurrentJobId] = useState<string | null>(null);
+  const [generatedCode, setGeneratedCode] = useState<string>('');
   const [notification, setNotification] = useState<{
     type: 'success' | 'error';
     message: string;
@@ -34,6 +36,9 @@ function App() {
 
       const response = await AnimationApiService.generateAnimation(prompt);
       setCurrentJobId(response.jobId);
+
+      // Store the generated code
+      setGeneratedCode(response.code);
 
       // Set initial status
       setJobStatus({
@@ -148,6 +153,25 @@ function App() {
 
               {/* Status display */}
               {jobStatus && <StatusDisplay jobStatus={jobStatus} onDownload={handleDownload} />}
+
+              {/* Generated code display */}
+              {generatedCode ? (
+                <div className="card">
+                  <h3 className="text-lg font-semibold text-gray-900 mb-4">Generated Manim Code</h3>
+                  <CodeDisplay
+                    code={generatedCode}
+                    language="python"
+                    title="Manim Animation Code"
+                  />
+                </div>
+              ) : (
+                <div className="card">
+                  <h3 className="text-lg font-semibold text-gray-900 mb-4">Generated Manim Code</h3>
+                  <div className="text-center py-8 text-gray-500">
+                    <p>Enter a prompt above to generate Manim code</p>
+                  </div>
+                </div>
+              )}
 
               {/* Info section */}
               <div className="grid md:grid-cols-3 gap-6">

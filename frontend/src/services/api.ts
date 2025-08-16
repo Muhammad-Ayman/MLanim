@@ -69,6 +69,21 @@ export class AnimationApiService {
   }
 
   /**
+   * Get Manim outputs for a job
+   */
+  static async getManimOutputs(jobId: string): Promise<{ outputs: any[] }> {
+    try {
+      const response = await api.get<{ outputs: any[] }>(`/animations/manim-output/${jobId}`);
+      return response.data;
+    } catch (error) {
+      if (axios.isAxiosError(error) && error.response?.data) {
+        throw new Error(error.response.data.message || 'Failed to get Manim outputs');
+      }
+      throw new Error('Network error occurred');
+    }
+  }
+
+  /**
    * Health check
    */
   static async healthCheck(): Promise<{ status: string }> {

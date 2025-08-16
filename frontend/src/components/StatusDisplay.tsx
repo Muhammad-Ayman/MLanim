@@ -1,7 +1,8 @@
-import React from 'react';
-import { Clock, Play, CheckCircle, XCircle, Download } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { Clock, Play, CheckCircle, XCircle, Download, ChevronDown, ChevronUp } from 'lucide-react';
 import { clsx } from 'clsx';
 import { JobStatus } from '../types';
+import { AnimationApiService } from '../services/api';
 
 interface StatusDisplayProps {
   jobStatus: JobStatus | null;
@@ -15,7 +16,7 @@ const statusConfig = {
     bgColor: 'bg-yellow-50',
     borderColor: 'border-yellow-200',
     text: 'Pending',
-    description: 'Your animation is queued and waiting to be processed...'
+    description: 'Your animation is queued and waiting to be processed...',
   },
   running: {
     icon: Play,
@@ -23,7 +24,7 @@ const statusConfig = {
     bgColor: 'bg-blue-50',
     borderColor: 'border-blue-200',
     text: 'Processing',
-    description: 'Your animation is being generated. This may take a few minutes...'
+    description: 'Your animation is being generated. This may take a few minutes...',
   },
   done: {
     icon: CheckCircle,
@@ -31,7 +32,7 @@ const statusConfig = {
     bgColor: 'bg-green-50',
     borderColor: 'border-green-200',
     text: 'Complete',
-    description: 'Your animation is ready!'
+    description: 'Your animation is ready!',
   },
   error: {
     icon: XCircle,
@@ -39,35 +40,60 @@ const statusConfig = {
     bgColor: 'bg-red-50',
     borderColor: 'border-red-200',
     text: 'Error',
-    description: 'Something went wrong while generating your animation.'
-  }
+    description: 'Something went wrong while generating your animation.',
+  },
 };
 
 export const StatusDisplay: React.FC<StatusDisplayProps> = ({ jobStatus, onDownload }) => {
+  const [manimOutputs, setManimOutputs] = useState<any[]>([]);
+  const [showOutputs, setShowOutputs] = useState(false);
+  const [isLoadingOutputs, setIsLoadingOutputs] = useState(false);
+
+  // Fetch Manim outputs when job is running
+  useEffect(() => {
+    if (jobStatus?.status === 'running' || jobStatus?.status === 'done') {
+      const fetchOutputs = async () => {
+        try {
+          setIsLoadingOutputs(true);
+          const response = await AnimationApiService.getManimOutputs(jobStatus.id);
+          if (response.outputs) {
+            setManimOutputs(response.outputs);
+          }
+        } catch (error) {
+          console.error('Failed to fetch Manim outputs:', error);
+        } finally {
+          setIsLoadingOutputs(false);
+        }
+      };
+
+      fetchOutputs();
+
+      // Poll for updates every 2 seconds when running
+      if (jobStatus.status === 'running') {
+        const interval = setInterval(fetchOutputs, 2000);
+        return () => clearInterval(interval);
+      }
+    }
+  }, [jobStatus?.id, jobStatus?.status]);
+
   if (!jobStatus) return null;
 
   const config = statusConfig[jobStatus.status];
   const IconComponent = config.icon;
 
   return (
-    <div className={clsx(
-      "card max-w-2xl mx-auto animate-fade-in",
-      config.bgColor,
-      config.borderColor
-    )}>
+    <div
+      className={clsx('card max-w-2xl mx-auto animate-fade-in', config.bgColor, config.borderColor)}
+    >
       <div className="flex items-start gap-4">
-        <div className={clsx("p-3 rounded-full", config.bgColor)}>
-          <IconComponent className={clsx("w-6 h-6", config.color)} />
+        <div className={clsx('p-3 rounded-full', config.bgColor)}>
+          <IconComponent className={clsx('w-6 h-6', config.color)} />
         </div>
-        
+
         <div className="flex-1">
-          <h3 className={clsx("text-lg font-semibold mb-2", config.color)}>
-            {config.text}
-          </h3>
-          
-          <p className="text-gray-700 mb-4">
-            {config.description}
-          </p>
+          <h3 className={clsx('text-lg font-semibold mb-2', config.color)}>{config.text}</h3>
+
+          <p className="text-gray-700 mb-4">{config.description}</p>
 
           {/* Progress bar for running status */}
           {jobStatus.status === 'running' && (
@@ -77,13 +103,75 @@ export const StatusDisplay: React.FC<StatusDisplayProps> = ({ jobStatus, onDownl
                 <span>{jobStatus.progress || 0}%</span>
               </div>
               <div className="w-full bg-gray-200 rounded-full h-2">
-                <div 
+                <div
                   className="bg-blue-600 h-2 rounded-full transition-all duration-500 ease-out"
                   style={{ width: `${jobStatus.progress || 0}%` }}
                 />
               </div>
+
+              {/* Current Manim Operation */}
+              {manimOutputs.length > 0 && (
+                <div className="mt-2 text-sm text-gray-600">
+                  <span className="font-medium">Current:</span>{' '}
+                  {manimOutputs[manimOutputs.length - 1]?.data || 'Initializing...'}
+                </div>
+              )}
             </div>
           )}
+
+          {/* Real-time Manim Output Display */}
+          {(jobStatus.status === 'running' || jobStatus.status === 'done') &&
+            manimOutputs.length > 0 && (
+              <div className="mb-4">
+                <button
+                  onClick={() => setShowOutputs(!showOutputs)}
+                  className="flex items-center gap-2 text-sm text-gray-600 hover:text-gray-800 mb-2"
+                >
+                  {showOutputs ? (
+                    <ChevronUp className="w-4 h-4" />
+                  ) : (
+                    <ChevronDown className="w-4 h-4" />
+                  )}
+                  <span>Manim Output ({manimOutputs.length})</span>
+                  {isLoadingOutputs && (
+                    <div className="w-4 h-4 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
+                  )}
+                </button>
+
+                {showOutputs && (
+                  <div className="bg-gray-50 border border-gray-200 rounded-lg p-3 max-h-64 overflow-y-auto">
+                    <div className="space-y-2">
+                      {manimOutputs.slice(-20).map((output, index) => (
+                        <div key={index} className="text-xs font-mono">
+                          <span className="text-gray-500">
+                            [{new Date(output.timestamp).toLocaleTimeString()}]
+                          </span>
+                          <span
+                            className={clsx(
+                              'ml-2',
+                              output.type === 'progress'
+                                ? 'text-blue-600 font-medium'
+                                : output.type === 'stderr'
+                                  ? 'text-red-600'
+                                  : output.type === 'stdout'
+                                    ? 'text-gray-700'
+                                    : 'text-gray-600'
+                            )}
+                          >
+                            {output.data}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                    {manimOutputs.length > 20 && (
+                      <div className="text-xs text-gray-500 mt-2 text-center">
+                        Showing last 20 outputs of {manimOutputs.length} total
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
 
           {/* Error details */}
           {jobStatus.status === 'error' && jobStatus.error && (
@@ -96,11 +184,7 @@ export const StatusDisplay: React.FC<StatusDisplayProps> = ({ jobStatus, onDownl
           {/* Video player for completed animations */}
           {jobStatus.status === 'done' && jobStatus.videoUrl && (
             <div className="mb-4">
-              <video
-                controls
-                className="w-full rounded-lg shadow-sm"
-                preload="metadata"
-              >
+              <video controls className="w-full rounded-lg shadow-sm" preload="metadata">
                 <source src={jobStatus.videoUrl} type="video/mp4" />
                 Your browser does not support the video tag.
               </video>
@@ -110,20 +194,14 @@ export const StatusDisplay: React.FC<StatusDisplayProps> = ({ jobStatus, onDownl
           {/* Action buttons */}
           <div className="flex gap-3">
             {jobStatus.status === 'done' && jobStatus.videoUrl && (
-              <button
-                onClick={onDownload}
-                className="btn-primary flex items-center gap-2"
-              >
+              <button onClick={onDownload} className="btn-primary flex items-center gap-2">
                 <Download className="w-4 h-4" />
                 Download Video
               </button>
             )}
-            
+
             {jobStatus.status === 'error' && (
-              <button
-                onClick={() => window.location.reload()}
-                className="btn-secondary"
-              >
+              <button onClick={() => window.location.reload()} className="btn-secondary">
                 Try Again
               </button>
             )}

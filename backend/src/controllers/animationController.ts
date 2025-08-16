@@ -82,6 +82,7 @@ export class AnimationController {
       res.status(201).json({
         jobId,
         message: 'Animation generation started successfully. Use the job ID to check status.',
+        code: geminiResponse.code,
       });
     } catch (error) {
       logger.error('Error in generateAnimation controller', { error, body: req.body });
@@ -167,6 +168,7 @@ export class AnimationController {
             ? `/outputs/${id}/${job.outputPath.split('/').pop()}`
             : undefined,
         error: job.error,
+        code: job.code,
         createdAt: job.createdAt,
         updatedAt: job.updatedAt,
       };
@@ -212,6 +214,34 @@ export class AnimationController {
       res.status(500).json({
         message: 'Failed to retrieve jobs',
         code: 'JOBS_RETRIEVAL_FAILED',
+        details: errorMessage,
+      });
+    }
+  }
+
+  /**
+   * Get detailed information about all jobs including BullMQ states
+   */
+  async getAllJobsDetailed(req: Request, res: Response): Promise<void> {
+    try {
+      logger.info('Retrieving detailed jobs information');
+
+      const jobs = await this.jobQueueService.getAllJobsDetailed();
+
+      logger.info('Detailed jobs retrieved successfully', { count: jobs.length });
+
+      res.status(200).json({
+        jobs,
+        count: jobs.length,
+        message: 'Detailed jobs retrieved successfully',
+      });
+    } catch (error) {
+      logger.error('Error in getAllJobsDetailed controller', { error });
+
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
+      res.status(500).json({
+        message: 'Failed to retrieve detailed jobs',
+        code: 'DETAILED_JOBS_RETRIEVAL_FAILED',
         details: errorMessage,
       });
     }
@@ -386,6 +416,101 @@ export class AnimationController {
       res.status(500).json({
         message: 'Failed to force kill job',
         code: 'FORCE_KILL_FAILED',
+        details: error instanceof Error ? error.message : 'Unknown error',
+      });
+    }
+  }
+
+  /**
+   * Get comprehensive debugging information for a job
+   */
+  async getJobDebugInfo(req: Request, res: Response): Promise<void> {
+    try {
+      const { id } = req.params;
+
+      if (!id) {
+        res.status(400).json({
+          message: 'Job ID is required',
+          code: 'MISSING_JOB_ID',
+        });
+        return;
+      }
+
+      const debugInfo = await this.jobQueueService.getJobDebugInfo(id);
+
+      res.status(200).json({
+        message: 'Job debug info retrieved successfully',
+        debugInfo,
+      });
+    } catch (error) {
+      logger.error('Failed to get job debug info', { error, jobId: req.params.id });
+      res.status(500).json({
+        message: 'Failed to get job debug info',
+        code: 'DEBUG_INFO_FAILED',
+        details: error instanceof Error ? error.message : 'Unknown error',
+      });
+    }
+  }
+
+  /**
+   * Get Manim output for a job
+   */
+  async getJobManimOutput(req: Request, res: Response): Promise<void> {
+    try {
+      const { id } = req.params;
+
+      if (!id) {
+        res.status(400).json({
+          message: 'Job ID is required',
+          code: 'MISSING_JOB_ID',
+        });
+        return;
+      }
+
+      const manimOutput = await this.jobQueueService.getJobManimOutput(id);
+
+      res.status(200).json({
+        message: 'Manim output retrieved successfully',
+        jobId: id,
+        outputs: manimOutput,
+        count: manimOutput.length,
+      });
+    } catch (error) {
+      logger.error('Failed to get Manim output', { error, jobId: req.params.id });
+      res.status(500).json({
+        message: 'Failed to get Manim output',
+        code: 'MANIM_OUTPUT_FAILED',
+        details: error instanceof Error ? error.message : 'Unknown error',
+      });
+    }
+  }
+
+  /**
+   * Reset stuck job progress
+   */
+  async resetJobProgress(req: Request, res: Response): Promise<void> {
+    try {
+      const { id } = req.params;
+
+      if (!id) {
+        res.status(400).json({
+          message: 'Job ID is required',
+          code: 'MISSING_JOB_ID',
+        });
+        return;
+      }
+
+      await this.jobQueueService.resetJobProgress(id);
+
+      res.status(200).json({
+        message: 'Job progress reset successfully',
+        jobId: id,
+      });
+    } catch (error) {
+      logger.error('Failed to reset job progress', { error, jobId: req.params.id });
+      res.status(500).json({
+        message: 'Failed to reset job progress',
+        code: 'PROGRESS_RESET_FAILED',
         details: error instanceof Error ? error.message : 'Unknown error',
       });
     }

@@ -3,6 +3,7 @@ FROM node:18-alpine
 # Install system dependencies
 RUN apk add --no-cache \
     curl \
+    bash \
     && rm -rf /var/cache/apk/*
 
 # Set working directory

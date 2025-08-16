@@ -5,6 +5,7 @@ export interface GenerateRequest {
 export interface GenerateResponse {
   jobId: string;
   message: string;
+  code: string;
 }
 
 export interface JobStatus {
@@ -13,6 +14,7 @@ export interface JobStatus {
   progress?: number;
   videoUrl?: string;
   error?: string;
+  code?: string;
   createdAt: Date;
   updatedAt: Date;
 }
