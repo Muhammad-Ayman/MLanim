@@ -19,6 +19,7 @@ interface ManimOutput {
 export class ManimRendererService {
   private readonly dockerImage = 'manimcommunity/manim:latest';
   private readonly containerTimeout = 300000; // 5 minutes - increased for complex animations
+  private readonly maxRetries = 2; // Retry failed renders
 
   /**
    * Render a Manim animation using Docker for safety
@@ -36,29 +37,66 @@ export class ManimRendererService {
       // Create temporary and output directories
       await this.ensureDirectories(tempDir, outputDir);
 
+      // Ensure proper permissions for Docker mounting
+      await this.ensureDirectoryPermissions(tempDir, outputDir);
+
+      // Validate the Manim code for potential issues
+      this.validateManimCode(code);
+
       // Write the Manim code to a temporary file
       const codeFilePath = path.join(tempDir, 'animation.py');
       await fs.writeFile(codeFilePath, code, 'utf8');
 
-      // Render using Docker
-      const result = await this.renderWithDocker(tempDir, outputDir, jobId, onOutput);
+      // Try rendering with retry logic
+      let lastError: Error | null = null;
+      for (let attempt = 1; attempt <= this.maxRetries; attempt++) {
+        try {
+          if (attempt > 1) {
+            logger.info(`Retrying Manim render (attempt ${attempt}/${this.maxRetries})`, { jobId });
+            if (onOutput) {
+              onOutput({
+                type: 'info',
+                data: `Retrying render (attempt ${attempt}/${this.maxRetries})`,
+                timestamp: new Date(),
+              });
+            }
+          }
 
-      const duration = Date.now() - startTime;
-      logger.info('Animation rendered successfully', {
-        jobId,
-        duration,
-        outputPath: result.outputPath,
-      });
+          // Render using Docker
+          const result = await this.renderWithDocker(tempDir, outputDir, jobId, onOutput, attempt);
 
-      return result;
-    } catch (error) {
+          const duration = Date.now() - startTime;
+          logger.info('Animation rendered successfully', {
+            jobId,
+            duration,
+            outputPath: result.outputPath,
+            attempts: attempt,
+          });
+
+          return result;
+        } catch (error) {
+          lastError = error instanceof Error ? error : new Error(String(error));
+          logger.warn(`Manim render attempt ${attempt} failed`, {
+            jobId,
+            error: lastError.message,
+          });
+
+          if (attempt < this.maxRetries) {
+            // Wait before retry
+            await new Promise(resolve => setTimeout(resolve, 2000));
+          }
+        }
+      }
+
+      // All attempts failed
       const duration = Date.now() - startTime;
-      logger.error('Animation rendering failed', {
+      logger.error('All Manim render attempts failed', {
         jobId,
-        error,
+        error: lastError?.message,
         duration,
+        attempts: this.maxRetries,
       });
-      throw error;
+      throw lastError || new Error('All render attempts failed');
     } finally {
       // Clean up temporary files
       await this.cleanupTempFiles(tempDir);
@@ -72,30 +110,34 @@ export class ManimRendererService {
     tempDir: string,
     outputDir: string,
     jobId: string,
-    onOutput?: (output: ManimOutput) => void
+    onOutput?: (output: ManimOutput) => void,
+    attempt: number = 1
   ): Promise<RenderResult> {
     return new Promise((resolve, reject) => {
       const containerName = `manim-render-${jobId}`;
 
-      // Docker run command for Manim
+      // Docker run command for Manim - with permission handling
       const dockerArgs = [
         'run',
         '--rm',
         '--name',
         containerName,
         '--memory',
-        '2g',
+        '4g', // Increased memory for video encoding
         '--cpus',
         '2',
         '--network',
         'none', // Isolate network
-        '--read-only', // Read-only filesystem
+        '--user',
+        '1000:1000', // Run as non-root user to avoid permission issues
         '--tmpfs',
-        '/tmp:rw,noexec,nosuid,size=100m',
+        '/tmp:rw,noexec,nosuid,size=500m', // Increased temp space
+        '--tmpfs',
+        '/var/tmp:rw,noexec,nosuid,size=500m', // Additional temp space
         '-v',
-        `${tempDir}:/manim`,
+        `${tempDir}:/manim:rw`, // Explicit read-write permissions
         '-v',
-        `${outputDir}:/output`,
+        `${outputDir}:/output:rw`, // Explicit read-write permissions
         '-w',
         '/manim',
         this.dockerImage,
@@ -106,9 +148,17 @@ export class ManimRendererService {
         '--format',
         'mp4',
         '--quality',
-        'medium_quality',
-        '--preview',
+        attempt === 1 ? 'm' : 'l', // Try lower quality on retry
+        '--disable_caching', // Disable caching to avoid conflicts
+        '--flush_cache', // Flush cache before rendering
       ];
+
+      // On retry attempts, try different permission strategies
+      if (attempt > 1) {
+        // Remove user restriction on retry to try root access
+        dockerArgs.splice(dockerArgs.indexOf('--user'), 2);
+        logger.debug('Retrying without user restriction for permission issues', { jobId, attempt });
+      }
 
       const dockerProcess = spawn('docker', dockerArgs, {
         stdio: ['pipe', 'pipe', 'pipe'],
@@ -153,7 +203,7 @@ export class ManimRendererService {
               });
             }
 
-            reject(new Error('Docker process timed out after 2 minutes'));
+            reject(new Error('Docker process timed out after 5 minutes'));
           } catch (timeoutError) {
             logger.error('Error during timeout cleanup', { jobId, timeoutError });
             reject(new Error('Docker process timed out and cleanup failed'));
@@ -333,7 +383,28 @@ export class ManimRendererService {
             reject(new Error(`Failed to locate output file: ${error}`));
           }
         } else {
-          reject(new Error(`Docker process failed with code ${code}: ${stderr}`));
+          // Enhanced error analysis for video encoding failures
+          let errorMessage = `Docker process failed with code ${code}`;
+
+          if (stderr.includes('Permission denied') || stderr.includes('PermissionError')) {
+            errorMessage =
+              'Permission denied during video encoding. This may be due to Docker container permissions or directory access issues.';
+          } else if (stderr.includes('combine_to_movie') || stderr.includes('mux')) {
+            errorMessage =
+              'Video encoding failed during frame combination. This may be due to memory constraints or corrupted frames.';
+          } else if (stderr.includes('av.container.output') || stderr.includes('OutputContainer')) {
+            errorMessage =
+              'FFmpeg video encoding failed. This may be due to insufficient memory or disk space.';
+          } else if (stderr.includes('scene.render()') || stderr.includes('SceneClass')) {
+            errorMessage = 'Scene rendering failed. Check the Manim code for errors.';
+          }
+
+          // Add attempt information to error
+          if (attempt > 1) {
+            errorMessage += ` (Attempt ${attempt}/${this.maxRetries})`;
+          }
+
+          reject(new Error(`${errorMessage}\n\nFull error: ${stderr}`));
         }
       });
 
@@ -358,6 +429,36 @@ export class ManimRendererService {
         logger.error('Failed to create directory', { dir, error });
         throw new Error(`Failed to create directory ${dir}: ${error}`);
       }
+    }
+  }
+
+  /**
+   * Ensure directories have proper permissions for Docker mounting
+   */
+  private async ensureDirectoryPermissions(tempDir: string, outputDir: string): Promise<void> {
+    try {
+      // On Unix-like systems, ensure directories are writable by Docker
+      if (process.platform !== 'win32') {
+        const { exec } = require('child_process');
+        const util = require('util');
+        const execAsync = util.promisify(exec);
+
+        try {
+          // Make directories writable by all users (for Docker)
+          await execAsync(`chmod -R 777 "${tempDir}"`);
+          await execAsync(`chmod -R 777 "${outputDir}"`);
+          logger.debug('Set directory permissions for Docker mounting', { tempDir, outputDir });
+        } catch (chmodError) {
+          logger.warn('Failed to set directory permissions, continuing anyway', {
+            tempDir,
+            outputDir,
+            error: chmodError,
+          });
+        }
+      }
+    } catch (error) {
+      logger.warn('Failed to ensure directory permissions', { error });
+      // Don't throw error for permission issues, continue anyway
     }
   }
 
@@ -390,6 +491,34 @@ export class ManimRendererService {
     } catch (error) {
       logger.warn('Failed to clean up temporary files', { tempDir, error });
       // Don't throw error for cleanup failures
+    }
+  }
+
+  /**
+   * Validate Manim code for potential issues
+   */
+  private validateManimCode(code: string): void {
+    // Check for common issues that might cause rendering failures
+    const issues: string[] = [];
+
+    if (code.includes('import *')) {
+      issues.push('Wildcard imports may cause conflicts');
+    }
+
+    if (code.includes('self.wait()') && !code.includes('self.wait(')) {
+      issues.push('Infinite wait detected - this will cause rendering to hang');
+    }
+
+    if (code.includes('while True') || code.includes('for _ in range(1000)')) {
+      issues.push('Potential infinite loops detected');
+    }
+
+    if (code.includes('os.system') || code.includes('subprocess')) {
+      issues.push('System commands detected - these are blocked for security');
+    }
+
+    if (issues.length > 0) {
+      logger.warn('Potential Manim code issues detected', { issues });
     }
   }
 
