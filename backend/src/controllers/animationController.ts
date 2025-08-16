@@ -48,6 +48,14 @@ export class AnimationController {
       // Generate Manim code using Gemini
       const geminiResponse = await this.geminiService.generateManimCode(prompt);
 
+      // Log the final code that will be used for rendering
+      logger.info('Final Manim code for rendering', {
+        prompt: prompt.substring(0, 100),
+        codeLength: geminiResponse.code.length,
+        code: geminiResponse.code,
+        hasCode: !!geminiResponse.code,
+      });
+
       // Validate the generated code
       if (!this.geminiService.validateGeneratedCode(geminiResponse.code)) {
         logger.warn('Generated code failed validation', { prompt: prompt.substring(0, 100) });
@@ -119,10 +127,41 @@ export class AnimationController {
       }
 
       // Transform the job data to match the JobStatus interface
+      // Use actual progress from the job instead of hardcoded values
+      let progress = 0;
+
+      if (job.status === 'done') {
+        progress = 100;
+      } else if (job.status === 'running') {
+        // Try to get actual progress from the job queue
+        try {
+          const queueJob = await this.jobQueueService.getJobProgress(id);
+          if (queueJob && typeof queueJob.progress === 'number') {
+            progress = queueJob.progress;
+            logger.debug('Using actual progress from queue', { jobId: id, progress });
+          } else {
+            // Fallback to estimated progress based on time
+            progress = 50; // Default fallback
+            logger.debug('Using fallback progress', { jobId: id, progress });
+          }
+        } catch (error) {
+          progress = 50; // Fallback on error
+          logger.debug('Error getting progress, using fallback', { jobId: id, error });
+        }
+      }
+
+      logger.debug('Job status transformation', {
+        jobId: id,
+        originalStatus: job.status,
+        calculatedProgress: progress,
+        hasOutputPath: !!job.outputPath,
+        outputPath: job.outputPath,
+      });
+
       const jobStatus: JobStatus = {
         id: job.id,
         status: job.status,
-        progress: job.status === 'running' ? 50 : job.status === 'done' ? 100 : 0,
+        progress: progress,
         videoUrl:
           job.status === 'done' && job.outputPath
             ? `/outputs/${id}/${job.outputPath.split('/').pop()}`
@@ -175,6 +214,149 @@ export class AnimationController {
         code: 'JOBS_RETRIEVAL_FAILED',
         details: errorMessage,
       });
+    }
+  }
+
+  /**
+   * Get detailed job progress information (debug endpoint)
+   */
+  async getJobProgress(req: Request, res: Response): Promise<void> {
+    try {
+      const { id } = req.params;
+
+      if (!id) {
+        res.status(400).json({
+          message: 'Job ID is required',
+          code: 'MISSING_JOB_ID',
+        });
+        return;
+      }
+
+      const progressInfo = await this.jobQueueService.getJobProgress(id);
+
+      // Add enhanced progress information
+      const enhancedProgress = {
+        ...progressInfo,
+        timestamp: new Date().toISOString(),
+        estimatedTimeRemaining: this.estimateTimeRemaining(progressInfo),
+        progressDetails: this.getProgressDetails(progressInfo),
+      };
+
+      res.status(200).json(enhancedProgress);
+    } catch (error) {
+      logger.error('Failed to get job progress', { error, jobId: req.params.id });
+      res.status(500).json({
+        message: 'Failed to get job progress',
+        code: 'PROGRESS_RETRIEVAL_FAILED',
+        details: error instanceof Error ? error.message : 'Unknown error',
+      });
+    }
+  }
+
+  /**
+   * Get live progress updates with Server-Sent Events
+   */
+  async getLiveProgress(req: Request, res: Response): Promise<void> {
+    try {
+      const { id } = req.params;
+
+      if (!id) {
+        res.status(400).json({
+          message: 'Job ID is required',
+          code: 'MISSING_JOB_ID',
+        });
+        return;
+      }
+
+      // Set up Server-Sent Events
+      res.writeHead(200, {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        Connection: 'keep-alive',
+        'Access-Control-Allow-Origin': '*',
+      });
+
+      // Send initial progress
+      const initialProgress = await this.jobQueueService.getJobProgress(id);
+      res.write(`data: ${JSON.stringify(initialProgress)}\n\n`);
+
+      // Set up progress polling
+      const progressInterval = setInterval(async () => {
+        try {
+          const progress = await this.jobQueueService.getJobProgress(id);
+          res.write(`data: ${JSON.stringify(progress)}\n\n`);
+
+          // Stop if job is complete
+          if (progress.status === 'done' || progress.status === 'failed') {
+            clearInterval(progressInterval);
+            res.end();
+          }
+        } catch (error) {
+          logger.error('Error in live progress update', { error, jobId: id });
+          clearInterval(progressInterval);
+          res.end();
+        }
+      }, 1000); // Update every second
+
+      // Clean up on client disconnect
+      req.on('close', () => {
+        clearInterval(progressInterval);
+        res.end();
+      });
+    } catch (error) {
+      logger.error('Failed to get live progress', { error, jobId: req.params.id });
+      res.status(500).json({
+        message: 'Failed to get live progress',
+        code: 'LIVE_PROGRESS_FAILED',
+        details: error instanceof Error ? error.message : 'Unknown error',
+      });
+    }
+  }
+
+  /**
+   * Estimate time remaining based on progress
+   */
+  private estimateTimeRemaining(progressInfo: any): string | null {
+    if (!progressInfo.createdAt || progressInfo.status !== 'running') {
+      return null;
+    }
+
+    const elapsed = Date.now() - new Date(progressInfo.createdAt).getTime();
+    const progress = progressInfo.progress || 0;
+
+    if (progress <= 0) return 'Unknown';
+
+    const estimatedTotal = elapsed / (progress / 100);
+    const remaining = estimatedTotal - elapsed;
+
+    if (remaining <= 0) return 'Almost done';
+
+    const minutes = Math.ceil(remaining / 60000);
+    return `${minutes} minute${minutes !== 1 ? 's' : ''}`;
+  }
+
+  /**
+   * Get human-readable progress details
+   */
+  private getProgressDetails(progressInfo: any): string {
+    const status = progressInfo.status;
+    const progress = progressInfo.progress || 0;
+
+    switch (status) {
+      case 'pending':
+        return 'Waiting in queue...';
+      case 'running':
+        if (progress < 25) return 'Initializing Manim...';
+        if (progress < 50) return 'Rendering frames...';
+        if (progress < 75) return 'Processing animation...';
+        if (progress < 90) return 'Finalizing output...';
+        return 'Almost complete...';
+      case 'done':
+        return 'Animation complete!';
+      case 'failed':
+        return 'Rendering failed';
+      default:
+        return 'Unknown status';
     }
   }
 

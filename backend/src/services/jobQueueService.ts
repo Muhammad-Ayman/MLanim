@@ -104,15 +104,31 @@ export class JobQueueService {
       // Handle progress safely - it might not be available for all job states
       let progress = 0;
       try {
+        logger.debug('Attempting to get job progress', {
+          jobId,
+          hasProgressMethod: typeof job.progress === 'function',
+          progressValue: job.progress,
+          progressType: typeof job.progress,
+        });
+
         if (typeof job.progress === 'function') {
           progress = await job.progress();
+          logger.debug('Progress retrieved via method', { jobId, progress });
         } else {
-          logger.debug('Progress method not available for job', { jobId });
+          // Try to get progress as a property
+          progress = (job.progress as number) || 0;
+          logger.debug('Progress retrieved as property', { jobId, progress });
         }
       } catch (progressError) {
-        logger.debug('Progress not available for job', { jobId, error: progressError });
+        logger.error('Progress retrieval failed', {
+          jobId,
+          error: progressError instanceof Error ? progressError.message : progressError,
+          stack: progressError instanceof Error ? progressError.stack : undefined,
+        });
         progress = 0;
       }
+
+      logger.debug('Final progress value', { jobId, progress });
 
       const failedReason = job.failedReason;
 
@@ -132,11 +148,21 @@ export class JobQueueService {
         throw new Error('Job data missing required fields');
       }
 
+      const mappedStatus = this.mapJobStateToStatus(state);
+      logger.debug('Job state mapping', {
+        jobId,
+        originalState: state,
+        mappedStatus,
+        progress,
+        hasOutputPath: !!job.returnvalue?.outputPath,
+        outputPath: job.returnvalue?.outputPath,
+      });
+
       const renderJob: RenderJob = {
         id: job.id as string,
         prompt: job.data.prompt,
         code: job.data.code,
-        status: this.mapJobStateToStatus(state),
+        status: mappedStatus,
         outputPath: job.returnvalue?.outputPath,
         error: failedReason,
         createdAt: job.timestamp ? new Date(job.timestamp) : new Date(),
@@ -194,25 +220,56 @@ export class JobQueueService {
 
         try {
           // Update progress to show job is starting
+          logger.debug('Setting initial progress to 10%', { jobId: job.id });
           await job.updateProgress(10);
+          logger.debug('Initial progress set successfully', { jobId: job.id, progress: 10 });
 
           // Simulate progress updates during rendering
           const progressInterval = setInterval(async () => {
             try {
               const currentProgress = job.progress as number;
+              logger.debug('Progress update interval triggered', {
+                jobId: job.id,
+                currentProgress,
+                progressType: typeof currentProgress,
+              });
+
               if (currentProgress < 90) {
-                await job.updateProgress(Math.min(currentProgress + 10, 90));
+                const newProgress = Math.min(currentProgress + 10, 90);
+                logger.debug('Updating progress', {
+                  jobId: job.id,
+                  from: currentProgress,
+                  to: newProgress,
+                });
+                await job.updateProgress(newProgress);
+                logger.debug('Progress updated successfully', {
+                  jobId: job.id,
+                  newProgress,
+                });
+              } else {
+                logger.debug('Progress already at or above 90%, skipping update', {
+                  jobId: job.id,
+                  currentProgress,
+                });
               }
             } catch (error) {
-              logger.debug('Could not update progress', { jobId: job.id, error });
+              logger.error('Failed to update progress', {
+                jobId: job.id,
+                error: error instanceof Error ? error.message : error,
+                stack: error instanceof Error ? error.stack : undefined,
+              });
             }
           }, 5000); // Update every 5 seconds
 
+          logger.debug('Starting Manim rendering', { jobId: job.id });
           const result = await this.manimRenderer.renderAnimation(job.data.code, job.id as string);
+          logger.debug('Manim rendering completed', { jobId: job.id, result });
 
           // Clear progress interval and set to 100%
+          logger.debug('Clearing progress interval and setting to 100%', { jobId: job.id });
           clearInterval(progressInterval);
           await job.updateProgress(100);
+          logger.debug('Final progress set to 100%', { jobId: job.id });
 
           logger.info('Job completed successfully', {
             jobId: job.id,
@@ -221,7 +278,11 @@ export class JobQueueService {
 
           return result;
         } catch (error) {
-          logger.error('Job failed', { jobId: job.id, error });
+          logger.error('Job failed', {
+            jobId: job.id,
+            error: error instanceof Error ? error.message : error,
+            stack: error instanceof Error ? error.stack : undefined,
+          });
           throw error;
         }
       },
@@ -238,8 +299,10 @@ export class JobQueueService {
     });
 
     this.worker.on('failed', (job: Job | undefined, err: Error) => {
-      if (job) {
+      if (job && job.id) {
         logger.error('Job failed', { jobId: job.id, error: err.message });
+        // Clean up any stuck Docker containers
+        this.cleanupStuckContainers(job.id.toString());
       } else {
         logger.error('Job failed with unknown job', { error: err.message });
       }
@@ -274,6 +337,50 @@ export class JobQueueService {
   }
 
   /**
+   * Get detailed job information including progress
+   */
+  async getJobProgress(jobId: string): Promise<any> {
+    try {
+      const job = await this.queue.getJob(jobId);
+      if (!job) {
+        return { error: 'Job not found' };
+      }
+
+      const state = await job.getState();
+      const progress = job.progress;
+      const data = job.data;
+      const returnValue = job.returnvalue;
+      const failedReason = job.failedReason;
+
+      logger.debug('Detailed job progress info', {
+        jobId,
+        state,
+        progress,
+        progressType: typeof progress,
+        hasData: !!data,
+        dataKeys: data ? Object.keys(data) : [],
+        hasReturnValue: !!returnValue,
+        returnValueKeys: returnValue ? Object.keys(returnValue) : [],
+        failedReason,
+      });
+
+      return {
+        jobId,
+        state,
+        progress,
+        progressType: typeof progress,
+        data,
+        returnValue,
+        failedReason,
+        timestamp: job.timestamp,
+      };
+    } catch (error) {
+      logger.error('Failed to get job progress details', { jobId, error });
+      throw error;
+    }
+  }
+
+  /**
    * Force kill a stuck job
    */
   async forceKillJob(jobId: string): Promise<void> {
@@ -288,6 +395,39 @@ export class JobQueueService {
     } catch (error) {
       logger.error('Failed to force kill job', { jobId, error });
       throw error;
+    }
+  }
+
+  /**
+   * Clean up stuck Docker containers for a failed job
+   */
+  private async cleanupStuckContainers(jobId: string): Promise<void> {
+    try {
+      // Try to find and kill any Docker containers related to this job
+      const { exec } = require('child_process');
+      const util = require('util');
+      const execAsync = util.promisify(exec);
+
+      // Look for containers with the job ID in the name
+      const { stdout } = await execAsync(
+        `docker ps -a --filter "name=mlanim-${jobId}" --format "{{.ID}}"`
+      );
+
+      if (stdout.trim()) {
+        const containerIds = stdout.trim().split('\n');
+        for (const containerId of containerIds) {
+          if (containerId) {
+            try {
+              await execAsync(`docker kill ${containerId}`);
+              logger.info('Cleaned up stuck Docker container', { jobId, containerId });
+            } catch (killError) {
+              logger.warn('Failed to kill Docker container', { jobId, containerId, killError });
+            }
+          }
+        }
+      }
+    } catch (error) {
+      logger.warn('Failed to cleanup Docker containers', { jobId, error });
     }
   }
 

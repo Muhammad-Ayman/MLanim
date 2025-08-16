@@ -7,6 +7,7 @@ import path from 'path';
 import { config, validateConfig } from './config';
 import { logger, loggerStream } from './utils/logger';
 import animationRoutes from './routes/animationRoutes';
+import systemRoutes from './routes/systemRoutes';
 import { errorHandler, notFoundHandler } from './middleware/errorHandler';
 
 export class App {
@@ -15,7 +16,7 @@ export class App {
   constructor() {
     // Validate configuration before starting
     validateConfig();
-    
+
     this.app = express();
     this.setupMiddleware();
     this.setupRoutes();
@@ -27,28 +28,33 @@ export class App {
    */
   private setupMiddleware(): void {
     // Security middleware
-    this.app.use(helmet({
-      contentSecurityPolicy: {
-        directives: {
-          defaultSrc: ["'self'"],
-          styleSrc: ["'self'", "'unsafe-inline'"],
-          scriptSrc: ["'self'"],
-          imgSrc: ["'self'", "data:", "blob:"],
-          mediaSrc: ["'self'"],
-          connectSrc: ["'self'"],
+    this.app.use(
+      helmet({
+        contentSecurityPolicy: {
+          directives: {
+            defaultSrc: ["'self'"],
+            styleSrc: ["'self'", "'unsafe-inline'"],
+            scriptSrc: ["'self'"],
+            imgSrc: ["'self'", 'data:', 'blob:'],
+            mediaSrc: ["'self'"],
+            connectSrc: ["'self'"],
+          },
         },
-      },
-    }));
+      })
+    );
 
     // CORS configuration
-    this.app.use(cors({
-      origin: process.env.NODE_ENV === 'production' 
-        ? ['https://yourdomain.com'] // Replace with your domain
-        : ['http://localhost:3000'],
-      credentials: true,
-      methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-      allowedHeaders: ['Content-Type', 'Authorization', 'X-Request-ID'],
-    }));
+    this.app.use(
+      cors({
+        origin:
+          process.env.NODE_ENV === 'production'
+            ? ['https://yourdomain.com'] // Replace with your domain
+            : ['http://localhost:3000'],
+        credentials: true,
+        methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+        allowedHeaders: ['Content-Type', 'Authorization', 'X-Request-ID'],
+      })
+    );
 
     // Request logging
     this.app.use(morgan('combined', { stream: loggerStream }));
@@ -62,17 +68,21 @@ export class App {
 
     // Request ID middleware
     this.app.use((req, res, next) => {
-      req.headers['x-request-id'] = req.headers['x-request-id'] || 
+      req.headers['x-request-id'] =
+        req.headers['x-request-id'] ||
         `req_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
       next();
     });
 
     // Static file serving for outputs
-    this.app.use('/outputs', express.static(path.join(process.cwd(), 'outputs'), {
-      maxAge: '1h',
-      etag: true,
-      lastModified: true,
-    }));
+    this.app.use(
+      '/outputs',
+      express.static(path.join(process.cwd(), 'outputs'), {
+        maxAge: '1h',
+        etag: true,
+        lastModified: true,
+      })
+    );
   }
 
   /**
@@ -85,12 +95,13 @@ export class App {
         status: 'ok',
         timestamp: new Date().toISOString(),
         uptime: process.uptime(),
-        environment: config.server.nodeEnv
+        environment: config.server.nodeEnv,
       });
     });
 
     // API routes
     this.app.use('/api/animations', animationRoutes);
+    this.app.use('/api/system', systemRoutes);
 
     // Root endpoint
     this.app.get('/', (req, res) => {
@@ -101,8 +112,8 @@ export class App {
           health: '/health',
           generate: '/api/animations/generate',
           status: '/api/animations/status/:id',
-          jobs: '/api/animations/jobs'
-        }
+          jobs: '/api/animations/jobs',
+        },
       });
     });
   }
@@ -137,7 +148,7 @@ export class App {
         logger.info(`Server started successfully`, {
           port: config.server.port,
           environment: config.server.nodeEnv,
-          timestamp: new Date().toISOString()
+          timestamp: new Date().toISOString(),
         });
       });
     } catch (error) {
@@ -151,9 +162,9 @@ export class App {
    */
   public async shutdown(): Promise<void> {
     logger.info('Shutting down server gracefully...');
-    
+
     // Close any open connections here if needed
-    
+
     process.exit(0);
   }
 }

@@ -1,5 +1,5 @@
 import axios, { AxiosResponse } from 'axios';
-import { GenerateRequest, GenerateResponse, JobStatus, ApiError } from '../types';
+import { GenerateRequest, GenerateResponse, JobStatus } from '../types';
 
 // Create axios instance with default configuration
 const api = axios.create({
@@ -12,11 +12,11 @@ const api = axios.create({
 
 // Request interceptor for logging
 api.interceptors.request.use(
-  (config) => {
+  config => {
     console.log(`API Request: ${config.method?.toUpperCase()} ${config.url}`, config.data);
     return config;
   },
-  (error) => {
+  error => {
     console.error('API Request Error:', error);
     return Promise.reject(error);
   }
@@ -28,7 +28,7 @@ api.interceptors.response.use(
     console.log(`API Response: ${response.status} ${response.config.url}`, response.data);
     return response;
   },
-  (error) => {
+  error => {
     console.error('API Response Error:', error.response?.data || error.message);
     return Promise.reject(error);
   }
@@ -43,7 +43,7 @@ export class AnimationApiService {
       const response = await api.post<GenerateResponse>('/animations/generate', {
         prompt,
       } as GenerateRequest);
-      
+
       return response.data;
     } catch (error) {
       if (axios.isAxiosError(error) && error.response?.data) {

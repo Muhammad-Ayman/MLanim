@@ -12,7 +12,7 @@ interface RenderResult {
 
 export class ManimRendererService {
   private readonly dockerImage = 'manimcommunity/manim:latest';
-  private readonly containerTimeout = 120000; // 2 minutes - reduced for better responsiveness
+  private readonly containerTimeout = 300000; // 5 minutes - increased for complex animations
 
   /**
    * Render a Manim animation using Docker for safety
@@ -109,25 +109,44 @@ export class ManimRendererService {
       let timeoutId: NodeJS.Timeout;
 
       // Set up timeout handler
-      timeoutId = setTimeout(() => {
+      timeoutId = setTimeout(async () => {
         if (!isResolved) {
           isResolved = true;
           logger.warn('Docker process timed out, killing container', { jobId, containerName });
 
-          // Kill the Docker container forcefully
-          const killProcess = spawn('docker', ['kill', containerName]);
-          killProcess.on('close', () => {
-            logger.debug('Container killed due to timeout', { jobId, containerName });
-          });
-
-          // Also kill the spawn process
           try {
-            dockerProcess.kill('SIGKILL');
-          } catch (error) {
-            logger.debug('Failed to kill spawn process', { jobId, error });
-          }
+            // Kill the Docker container forcefully
+            const killProcess = spawn('docker', ['kill', containerName]);
+            await new Promise<void>(resolveKill => {
+              killProcess.on('close', () => {
+                logger.debug('Container killed due to timeout', { jobId, containerName });
+                resolveKill();
+              });
+            });
 
-          reject(new Error('Docker process timed out after 2 minutes'));
+            // Also kill the spawn process
+            try {
+              dockerProcess.kill('SIGKILL');
+            } catch (error) {
+              logger.debug('Failed to kill spawn process', { jobId, error });
+            }
+
+            // Clean up temporary files
+            try {
+              await fs.rm(tempDir, { recursive: true, force: true });
+              logger.debug('Cleaned up temp directory after timeout', { jobId, tempDir });
+            } catch (cleanupError) {
+              logger.warn('Failed to cleanup temp directory after timeout', {
+                jobId,
+                cleanupError,
+              });
+            }
+
+            reject(new Error('Docker process timed out after 2 minutes'));
+          } catch (timeoutError) {
+            logger.error('Error during timeout cleanup', { jobId, timeoutError });
+            reject(new Error('Docker process timed out and cleanup failed'));
+          }
         }
       }, this.containerTimeout);
 

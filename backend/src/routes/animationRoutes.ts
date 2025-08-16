@@ -49,6 +49,25 @@ router.get(
 // Get all jobs (for monitoring)
 router.get('/jobs', animationController.getAllJobs.bind(animationController));
 
+// Debug endpoint to get detailed job progress
+router.get('/debug/:id', animationController.getJobProgress.bind(animationController));
+
+// Live progress endpoint (Server-Sent Events)
+router.get(
+  '/live/:id',
+  rateLimit({
+    windowMs: 15 * 60 * 1000, // 15 minutes
+    max: 50, // Limit each IP to 50 live progress requests per windowMs
+    message: {
+      message: 'Too many live progress requests from this IP, please try again later.',
+      code: 'RATE_LIMIT_EXCEEDED',
+    },
+    standardHeaders: true,
+    legacyHeaders: false,
+  }),
+  animationController.getLiveProgress.bind(animationController)
+);
+
 // Force kill a stuck job
 router.post(
   '/kill/:id',

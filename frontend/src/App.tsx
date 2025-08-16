@@ -1,12 +1,14 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { Header } from './components/Header';
 import { PromptInput } from './components/PromptInput';
 import { StatusDisplay } from './components/StatusDisplay';
+import ProcessManager from './components/ProcessManager';
 import { AnimationApiService } from './services/api';
 import { JobStatus } from './types';
 import { AlertCircle, CheckCircle, Sparkles, ExternalLink } from 'lucide-react';
 
 function App() {
+  const [activeTab, setActiveTab] = useState<'generator' | 'processes'>('generator');
   const [isLoading, setIsLoading] = useState(false);
   const [jobStatus, setJobStatus] = useState<JobStatus | null>(null);
   const [currentJobId, setCurrentJobId] = useState<string | null>(null);
@@ -98,7 +100,7 @@ function App() {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      <Header />
+      <Header activeTab={activeTab} onTabChange={setActiveTab} />
 
       {/* Notification */}
       {notification && (
@@ -120,63 +122,71 @@ function App() {
       )}
 
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        {/* Hero section */}
-        <div className="text-center mb-12">
-          <h2 className="text-4xl font-bold text-gray-900 mb-4">
-            Create Mathematical Animations with AI
-          </h2>
-          <p className="text-xl text-gray-600 max-w-3xl mx-auto">
-            Describe any mathematical concept or animation in natural language, and watch as our AI
-            generates beautiful Manim animations for you.
-          </p>
-        </div>
-
-        {/* Main content */}
-        <div className="space-y-8">
-          {/* Prompt input */}
-          <div className="card">
-            <h3 className="text-lg font-semibold text-gray-900 mb-4">
-              What would you like to animate?
-            </h3>
-            <PromptInput onSubmit={handlePromptSubmit} isLoading={isLoading} />
-          </div>
-
-          {/* Status display */}
-          {jobStatus && <StatusDisplay jobStatus={jobStatus} onDownload={handleDownload} />}
-
-          {/* Info section */}
-          <div className="grid md:grid-cols-3 gap-6">
-            <div className="card text-center">
-              <div className="p-3 bg-blue-100 rounded-full w-12 h-12 mx-auto mb-4 flex items-center justify-center">
-                <Sparkles className="w-6 h-6 text-blue-600" />
-              </div>
-              <h3 className="font-semibold text-gray-900 mb-2">AI-Powered</h3>
-              <p className="text-gray-600 text-sm">
-                Uses Google Gemini to understand your descriptions and generate accurate Manim code
+        {/* Tab Content */}
+        {activeTab === 'generator' ? (
+          <>
+            {/* Hero section */}
+            <div className="text-center mb-12">
+              <h2 className="text-4xl font-bold text-gray-900 mb-4">
+                Create Mathematical Animations with AI
+              </h2>
+              <p className="text-xl text-gray-600 max-w-3xl mx-auto">
+                Describe any mathematical concept or animation in natural language, and watch as our
+                AI generates beautiful Manim animations for you.
               </p>
             </div>
 
-            <div className="card text-center">
-              <div className="p-3 bg-green-100 rounded-full w-12 h-12 mx-auto mb-4 flex items-center justify-center">
-                <CheckCircle className="w-6 h-6 text-green-600" />
+            {/* Main content */}
+            <div className="space-y-8">
+              {/* Prompt input */}
+              <div className="card">
+                <h3 className="text-lg font-semibold text-gray-900 mb-4">
+                  What would you like to animate?
+                </h3>
+                <PromptInput onSubmit={handlePromptSubmit} isLoading={isLoading} />
               </div>
-              <h3 className="font-semibold text-gray-900 mb-2">Safe Execution</h3>
-              <p className="text-gray-600 text-sm">
-                All code runs in isolated Docker containers for security and reliability
-              </p>
-            </div>
 
-            <div className="card text-center">
-              <div className="p-3 bg-purple-100 rounded-full w-12 h-12 mx-auto mb-4 flex items-center justify-center">
-                <ExternalLink className="w-6 h-6 text-purple-600" />
+              {/* Status display */}
+              {jobStatus && <StatusDisplay jobStatus={jobStatus} onDownload={handleDownload} />}
+
+              {/* Info section */}
+              <div className="grid md:grid-cols-3 gap-6">
+                <div className="card text-center">
+                  <div className="p-3 bg-blue-100 rounded-full w-12 h-12 mx-auto mb-4 flex items-center justify-center">
+                    <Sparkles className="w-6 h-6 text-blue-600" />
+                  </div>
+                  <h3 className="font-semibold text-gray-900 mb-2">AI-Powered</h3>
+                  <p className="text-gray-600 text-sm">
+                    Uses Google Gemini to understand your descriptions and generate accurate Manim
+                    code
+                  </p>
+                </div>
+
+                <div className="card text-center">
+                  <div className="p-3 bg-green-100 rounded-full w-12 h-12 mx-auto mb-4 flex items-center justify-center">
+                    <CheckCircle className="w-6 h-6 text-green-600" />
+                  </div>
+                  <h3 className="font-semibold text-gray-900 mb-2">Safe Execution</h3>
+                  <p className="text-gray-600 text-sm">
+                    All code runs in isolated Docker containers for security and reliability
+                  </p>
+                </div>
+
+                <div className="card text-center">
+                  <div className="p-3 bg-purple-100 rounded-full w-12 h-12 mx-auto mb-4 flex items-center justify-center">
+                    <ExternalLink className="w-6 h-6 text-purple-600" />
+                  </div>
+                  <h3 className="font-semibold text-gray-900 mb-2">High Quality</h3>
+                  <p className="text-gray-600 text-sm">
+                    Professional-grade animations rendered with Manim's powerful engine
+                  </p>
+                </div>
               </div>
-              <h3 className="font-semibold text-gray-900 mb-2">High Quality</h3>
-              <p className="text-gray-600 text-sm">
-                Professional-grade animations rendered with Manim's powerful engine
-              </p>
             </div>
-          </div>
-        </div>
+          </>
+        ) : (
+          <ProcessManager />
+        )}
       </main>
     </div>
   );

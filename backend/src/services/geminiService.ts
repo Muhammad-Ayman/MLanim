@@ -52,8 +52,23 @@ export class GeminiService {
       const response = await result.response;
       const text = response.text();
 
+      // Log the full Gemini response for debugging
+      logger.info('Gemini API response received', {
+        prompt: prompt.substring(0, 100),
+        responseLength: text.length,
+        fullResponse: text,
+        responseType: typeof text,
+      });
+
       // Clean up the response to extract just the code
       const code = this.extractCodeFromResponse(text);
+
+      logger.info('Code extraction completed', {
+        prompt: prompt.substring(0, 100),
+        extractedCodeLength: code ? code.length : 0,
+        extractedCode: code,
+        hasCode: !!code,
+      });
 
       logger.info('Successfully generated Manim code', {
         codeLength: code.length,
