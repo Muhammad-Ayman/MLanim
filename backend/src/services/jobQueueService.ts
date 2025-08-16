@@ -20,7 +20,7 @@ export class JobQueueService {
     });
     this.queue = new Queue('manim-rendering', { connection: this.redis });
     this.manimRenderer = new ManimRendererService();
-    
+
     this.setupWorker();
     this.setupEventHandlers();
   }
@@ -28,7 +28,9 @@ export class JobQueueService {
   /**
    * Add a new rendering job to the queue
    */
-  async addJob(jobData: Omit<RenderJob, 'id' | 'status' | 'createdAt' | 'updatedAt'>): Promise<string> {
+  async addJob(
+    jobData: Omit<RenderJob, 'id' | 'status' | 'createdAt' | 'updatedAt'>
+  ): Promise<string> {
     try {
       const job = await this.queue.add('render', jobData, {
         attempts: 3,
@@ -40,15 +42,17 @@ export class JobQueueService {
         removeOnFail: 50,
       });
 
-      logger.info('Added new rendering job to queue', { 
+      logger.info('Added new rendering job to queue', {
         jobId: job.id,
-        prompt: jobData.prompt.substring(0, 100)
+        prompt: jobData.prompt.substring(0, 100),
       });
 
       return job.id as string;
     } catch (error) {
       logger.error('Failed to add job to queue', { error, jobData });
-      throw new Error(`Failed to queue rendering job: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      throw new Error(
+        `Failed to queue rendering job: ${error instanceof Error ? error.message : 'Unknown error'}`
+      );
     }
   }
 
@@ -58,16 +62,44 @@ export class JobQueueService {
   async getJobStatus(jobId: string): Promise<RenderJob | null> {
     try {
       const job = await this.queue.getJob(jobId);
-      
+
       if (!job) {
+        logger.warn('Job not found in queue', { jobId });
         return null;
       }
 
+      // Validate that we have a proper BullMQ job object
+      if (typeof job.progress !== 'function') {
+        logger.error('Invalid job object - progress method not found', {
+          jobId,
+          jobType: typeof job,
+          jobKeys: Object.keys(job),
+          hasProgress: typeof job.progress,
+        });
+        throw new Error('Invalid job object structure');
+      }
+
+      logger.debug('Retrieved job from queue', {
+        jobId,
+        jobExists: !!job,
+        jobData: job.data,
+        jobState: await job.getState(),
+      });
+
       const state = await job.getState();
-      const progress = await job.progress();
+
+      // Handle progress safely - it might not be available for all job states
+      let progress = 0;
+      try {
+        progress = await job.progress();
+      } catch (progressError) {
+        logger.debug('Progress not available for job', { jobId, error: progressError });
+        progress = 0;
+      }
+
       const failedReason = job.failedReason;
 
-      return {
+      const renderJob: RenderJob = {
         id: job.id as string,
         prompt: job.data.prompt,
         code: job.data.code,
@@ -77,9 +109,14 @@ export class JobQueueService {
         createdAt: job.timestamp ? new Date(job.timestamp) : new Date(),
         updatedAt: new Date(),
       };
+
+      logger.debug('Mapped job to RenderJob', { jobId, renderJob });
+      return renderJob;
     } catch (error) {
       logger.error('Failed to get job status', { error, jobId });
-      throw new Error(`Failed to get job status: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      throw new Error(
+        `Failed to get job status: ${error instanceof Error ? error.message : 'Unknown error'}`
+      );
     }
   }
 
@@ -89,9 +126,9 @@ export class JobQueueService {
   async getAllJobs(): Promise<RenderJob[]> {
     try {
       const jobs = await this.queue.getJobs(['active', 'waiting', 'completed', 'failed']);
-      
+
       return Promise.all(
-        jobs.map(async (job) => {
+        jobs.map(async job => {
           const state = await job.getState();
           return {
             id: job.id as string,
@@ -107,7 +144,9 @@ export class JobQueueService {
       );
     } catch (error) {
       logger.error('Failed to get all jobs', { error });
-      throw new Error(`Failed to get all jobs: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      throw new Error(
+        `Failed to get all jobs: ${error instanceof Error ? error.message : 'Unknown error'}`
+      );
     }
   }
 
@@ -119,18 +158,15 @@ export class JobQueueService {
       'manim-rendering',
       async (job: Job) => {
         logger.info('Processing rendering job', { jobId: job.id });
-        
+
         try {
-          const result = await this.manimRenderer.renderAnimation(
-            job.data.code,
-            job.id as string
-          );
-          
-          logger.info('Job completed successfully', { 
-            jobId: job.id, 
-            outputPath: result.outputPath 
+          const result = await this.manimRenderer.renderAnimation(job.data.code, job.id as string);
+
+          logger.info('Job completed successfully', {
+            jobId: job.id,
+            outputPath: result.outputPath,
           });
-          
+
           return result;
         } catch (error) {
           logger.error('Job failed', { jobId: job.id, error });

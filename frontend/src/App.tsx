@@ -4,7 +4,7 @@ import { PromptInput } from './components/PromptInput';
 import { StatusDisplay } from './components/StatusDisplay';
 import { AnimationApiService } from './services/api';
 import { JobStatus } from './types';
-import { AlertCircle, CheckCircle } from 'lucide-react';
+import { AlertCircle, CheckCircle, Sparkles, ExternalLink } from 'lucide-react';
 
 function App() {
   const [isLoading, setIsLoading] = useState(false);
@@ -29,21 +29,24 @@ function App() {
     try {
       setIsLoading(true);
       setJobStatus(null);
-      
+
       const response = await AnimationApiService.generateAnimation(prompt);
       setCurrentJobId(response.jobId);
-      
+
       // Set initial status
       setJobStatus({
         id: response.jobId,
         status: 'pending',
         createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString()
+        updatedAt: new Date().toISOString(),
       });
-      
+
       showNotification('success', 'Animation generation started!');
     } catch (error) {
-      showNotification('error', error instanceof Error ? error.message : 'Failed to start animation generation');
+      showNotification(
+        'error',
+        error instanceof Error ? error.message : 'Failed to start animation generation'
+      );
     } finally {
       setIsLoading(false);
     }
@@ -57,7 +60,7 @@ function App() {
       try {
         const status = await AnimationApiService.getJobStatus(currentJobId);
         setJobStatus(status);
-        
+
         // Stop polling if job is complete or failed
         if (status.status === 'done' || status.status === 'error') {
           setCurrentJobId(null);
@@ -74,10 +77,10 @@ function App() {
 
     // Initial poll
     pollStatus();
-    
+
     // Set up polling interval
     const interval = setInterval(pollStatus, POLLING_INTERVAL);
-    
+
     return () => clearInterval(interval);
   }, [currentJobId, showNotification]);
 
@@ -96,17 +99,16 @@ function App() {
   return (
     <div className="min-h-screen bg-gray-50">
       <Header />
-      
+
       {/* Notification */}
       {notification && (
         <div className="fixed top-20 right-4 z-50 animate-slide-up">
-          <div className={`
+          <div
+            className={`
             flex items-center gap-3 p-4 rounded-lg shadow-lg max-w-sm
-            ${notification.type === 'success' 
-              ? 'bg-green-500 text-white' 
-              : 'bg-red-500 text-white'
-            }
-          `}>
+            ${notification.type === 'success' ? 'bg-green-500 text-white' : 'bg-red-500 text-white'}
+          `}
+          >
             {notification.type === 'success' ? (
               <CheckCircle className="w-5 h-5" />
             ) : (
@@ -124,7 +126,8 @@ function App() {
             Create Mathematical Animations with AI
           </h2>
           <p className="text-xl text-gray-600 max-w-3xl mx-auto">
-            Describe any mathematical concept or animation in natural language, and watch as our AI generates beautiful Manim animations for you.
+            Describe any mathematical concept or animation in natural language, and watch as our AI
+            generates beautiful Manim animations for you.
           </p>
         </div>
 
@@ -139,12 +142,7 @@ function App() {
           </div>
 
           {/* Status display */}
-          {jobStatus && (
-            <StatusDisplay 
-              jobStatus={jobStatus} 
-              onDownload={handleDownload}
-            />
-          )}
+          {jobStatus && <StatusDisplay jobStatus={jobStatus} onDownload={handleDownload} />}
 
           {/* Info section */}
           <div className="grid md:grid-cols-3 gap-6">
@@ -157,7 +155,7 @@ function App() {
                 Uses Google Gemini to understand your descriptions and generate accurate Manim code
               </p>
             </div>
-            
+
             <div className="card text-center">
               <div className="p-3 bg-green-100 rounded-full w-12 h-12 mx-auto mb-4 flex items-center justify-center">
                 <CheckCircle className="w-6 h-6 text-green-600" />
@@ -167,7 +165,7 @@ function App() {
                 All code runs in isolated Docker containers for security and reliability
               </p>
             </div>
-            
+
             <div className="card text-center">
               <div className="p-3 bg-purple-100 rounded-full w-12 h-12 mx-auto mb-4 flex items-center justify-center">
                 <ExternalLink className="w-6 h-6 text-purple-600" />
