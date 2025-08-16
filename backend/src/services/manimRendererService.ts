@@ -116,7 +116,10 @@ export class ManimRendererService {
     return new Promise((resolve, reject) => {
       const containerName = `manim-render-${jobId}`;
 
-      // Docker run command for Manim - with permission handling
+      // Check if we're running inside a Docker container
+      const isRunningInContainer = this.isRunningInDockerContainer();
+
+      // Docker run command for Manim - with proper flag ordering
       const dockerArgs = [
         'run',
         '--rm',
@@ -132,56 +135,96 @@ export class ManimRendererService {
         '/tmp:rw,noexec,nosuid,size=500m', // Increased temp space
         '--tmpfs',
         '/var/tmp:rw,noexec,nosuid,size=500m', // Additional temp space
-        '-v',
-        `${tempDir}:/manim:rw`, // Explicit read-write permissions
-        '-v',
-        `${outputDir}:/output:rw`, // Explicit read-write permissions
         '-w',
         '/manim',
         this.dockerImage,
         'manim',
-        'animation.py',
         '-o',
-        '/output',
+        '/manim/outputs.mp4', // Output file - Manim v0.19.0 creates the file directly
         '--format',
         'mp4',
         '--quality',
-        attempt === 1 ? 'm' : 'l', // Try lower quality on retry
+        attempt === 1 ? 'm' : 'l', // Use valid quality values for v0.19.0: l, m, h, p, k
         '--disable_caching', // Disable caching to avoid conflicts
         '--flush_cache', // Flush cache before rendering
+        'temp/animation.py', // Input file comes LAST, now in temp subdirectory
       ];
 
-      // Add user mapping to run as host user (Unix systems only)
-      if (process.platform !== 'win32') {
+      // Handle Docker-in-Docker scenario
+      if (isRunningInContainer) {
+        // We're running inside a container, need to use host paths
+        // Mount the Docker socket to allow spawning containers
+        dockerArgs.splice(6, 0, '-v', '/var/run/docker.sock:/var/run/docker.sock');
+
+        // Use host paths for volumes (these are the paths on the host system)
+        const hostTempDir = tempDir.replace('/app/', './');
+        const hostOutputDir = outputDir.replace('/app/', './');
+
+        dockerArgs.splice(8, 0, '-v', `${hostTempDir}:/manim/temp:rw`);
+        // Mount output directory to /manim so the output file appears there
+        dockerArgs.splice(10, 0, '-v', `${hostOutputDir}:/manim:rw`);
+
+        logger.debug('Running in Docker-in-Docker mode with host paths', {
+          hostTempDir,
+          hostOutputDir,
+          jobId,
+          isRunningInContainer,
+        });
+      } else {
+        // Running locally, use direct paths
+        dockerArgs.splice(6, 0, '-v', `${tempDir}:/manim/temp:rw`);
+        // Mount output directory to /manim so the output file appears there
+        dockerArgs.splice(8, 0, '-v', `${outputDir}:/manim:rw`);
+
+        logger.debug('Running in local mode with direct paths', {
+          tempDir,
+          outputDir,
+          jobId,
+          isRunningInContainer,
+        });
+      }
+
+      // Handle user mapping for cross-platform compatibility
+      if (attempt > 1) {
+        // For retry attempts, run as root to bypass permission issues
+        dockerArgs.splice(6, 0, '--user', '0:0');
+        logger.debug('Retrying with root user for permission issues', {
+          jobId,
+          attempt,
+        });
+      } else {
+        // First attempt: try to run as the same user as the backend process
         try {
-          // Get current user ID and group ID
-          const { uid: currentUid, gid: currentGid } = this.getCurrentUserIds();
+          // Cross-platform user ID handling
+          let userId: string;
+          let groupId: string;
 
-          // Insert user mapping after --network
-          dockerArgs.splice(6, 0, '--user', `${currentUid}:${currentGid}`);
+          if (process.platform === 'linux') {
+            // On Linux, use actual process UID/GID
+            userId = (process.getuid?.() || 1000).toString();
+            groupId = (process.getgid?.() || 1000).toString();
+          } else {
+            // On Windows/macOS, use default values since Docker Desktop handles permissions differently
+            userId = '1000';
+            groupId = '1000';
+          }
 
-          logger.debug('Added user mapping for Docker container', {
-            uid: currentUid,
-            gid: currentGid,
+          // Override with environment variables if set
+          userId = process.env.BACKEND_UID || userId;
+          groupId = process.env.BACKEND_GID || groupId;
+
+          dockerArgs.splice(6, 0, '--user', `${userId}:${groupId}`);
+
+          logger.debug('Running Manim container with user mapping', {
+            uid: userId,
+            gid: groupId,
+            platform: process.platform,
             jobId,
           });
         } catch (error) {
-          logger.warn('Failed to get user ID, running without user mapping', {
+          logger.warn('Failed to set user mapping, running as default', {
             error,
             jobId,
-          });
-        }
-      }
-
-      // On retry attempts, try different permission strategies
-      if (attempt > 1) {
-        // Remove user restriction on retry to try root access
-        const userIndex = dockerArgs.indexOf('--user');
-        if (userIndex !== -1) {
-          dockerArgs.splice(userIndex, 2);
-          logger.debug('Retrying without user restriction for permission issues', {
-            jobId,
-            attempt,
           });
         }
       }
@@ -414,13 +457,17 @@ export class ManimRendererService {
 
           if (stderr.includes('Permission denied') || stderr.includes('PermissionError')) {
             errorMessage =
-              'Permission denied during video encoding. This may be due to Docker container permissions or directory access issues.';
+              'Permission denied during video encoding. This may be due to Docker container permissions or directory access issues. ' +
+              'Please ensure the output and temp directories have proper permissions (775 or 777). ' +
+              'You can run the setup-permissions script to fix this.';
           } else if (stderr.includes('combine_to_movie') || stderr.includes('mux')) {
             errorMessage =
-              'Video encoding failed during frame combination. This may be due to memory constraints or corrupted frames.';
+              'Video encoding failed during frame combination. This may be due to memory constraints or corrupted frames. ' +
+              'Try reducing animation complexity or increasing Docker memory limits.';
           } else if (stderr.includes('av.container.output') || stderr.includes('OutputContainer')) {
             errorMessage =
-              'FFmpeg video encoding failed. This may be due to insufficient memory or disk space.';
+              'FFmpeg video encoding failed. This may be due to insufficient memory or disk space. ' +
+              'Check available system resources and Docker memory limits.';
           } else if (stderr.includes('scene.render()') || stderr.includes('SceneClass')) {
             errorMessage = 'Scene rendering failed. Check the Manim code for errors.';
           }
@@ -459,37 +506,13 @@ export class ManimRendererService {
   }
 
   /**
-   * Get current user ID and group ID for Docker user mapping
-   */
-  private getCurrentUserIds(): { uid: string; gid: string } {
-    try {
-      if (process.platform !== 'win32') {
-        const { execSync } = require('child_process');
-
-        try {
-          const uid = execSync('id -u', { encoding: 'utf8' }).trim();
-          const gid = execSync('id -g', { encoding: 'utf8' }).trim();
-          return { uid, gid };
-        } catch (error) {
-          logger.warn('Failed to get user ID via execSync, using environment variables', { error });
-        }
-      }
-
-      // Fallback to environment variables or defaults
-      const uid = process.env.USER_ID || process.env.UID || '1000';
-      const gid = process.env.GROUP_ID || process.env.GID || uid;
-      return { uid, gid };
-    } catch (error) {
-      logger.warn('Failed to get user IDs, using defaults', { error });
-      return { uid: '1000', gid: '1000' };
-    }
-  }
-
-  /**
    * Ensure directories have proper permissions for Docker mounting
    */
   private async ensureDirectoryPermissions(tempDir: string, outputDir: string): Promise<void> {
     try {
+      // Ensure directories exist and are writable
+      await this.ensureDirectories(tempDir, outputDir);
+
       // On Unix-like systems, ensure directories are writable by Docker
       if (process.platform !== 'win32') {
         const { exec } = require('child_process');
@@ -497,27 +520,48 @@ export class ManimRendererService {
         const execAsync = util.promisify(exec);
 
         try {
-          // Get current user ID and group ID
-          const { uid: currentUid, gid: currentGid } = this.getCurrentUserIds();
+          // Cross-platform user ID handling
+          let backendUid: string;
+          let backendGid: string;
 
-          logger.debug('Current user ID and group ID', { uid: currentUid, gid: currentGid });
+          if (process.platform === 'linux') {
+            // On Linux, use actual process UID/GID
+            backendUid = (process.getuid?.() || 1000).toString();
+            backendGid = (process.getgid?.() || 1000).toString();
+          } else {
+            // On macOS, use default values
+            backendUid = '1000';
+            backendGid = '1000';
+          }
 
-          // Make directories owned by current user and writable
-          await execAsync(`chown -R ${currentUid}:${currentGid} "${tempDir}"`);
-          await execAsync(`chown -R ${currentUid}:${currentGid} "${outputDir}"`);
+          // Override with environment variables if set
+          backendUid = process.env.BACKEND_UID || backendUid;
+          backendGid = process.env.BACKEND_GID || backendGid;
+
+          logger.debug('Setting directory permissions for backend user', {
+            uid: backendUid,
+            gid: backendGid,
+            tempDir,
+            outputDir,
+            platform: process.platform,
+          });
+
+          // Make directories owned by backend user and writable
+          await execAsync(`chown -R ${backendUid}:${backendGid} "${tempDir}"`);
+          await execAsync(`chown -R ${backendUid}:${backendGid} "${outputDir}"`);
 
           // Set permissions to 755 (rwxr-xr-x) for directories
           await execAsync(`chmod -R 755 "${tempDir}"`);
           await execAsync(`chmod -R 755 "${outputDir}"`);
 
-          // Ensure output directory is writable by owner
+          // Ensure output directory is writable by owner and group
           await execAsync(`chmod -R 775 "${outputDir}"`);
 
           logger.debug('Set directory ownership and permissions for Docker mounting', {
             tempDir,
             outputDir,
-            uid: currentUid,
-            gid: currentGid,
+            uid: backendUid,
+            gid: backendGid,
           });
         } catch (chmodError) {
           logger.warn('Failed to set directory permissions, trying fallback', {
@@ -551,11 +595,31 @@ export class ManimRendererService {
    */
   private async findVideoFile(outputDir: string): Promise<string> {
     try {
+      // Since we're mounting the output directory to /manim in the container,
+      // and the container's working directory is /manim, the output files will be
+      // in the outputDir that we mounted
       const files = await fs.readdir(outputDir);
-      const videoFile = files.find(file => file.endsWith('.mp4') && file.includes('animation'));
+
+      // Look for MP4 files - Manim typically names them with the scene class name
+      // or with 'animation' in the filename
+      const videoFile = files.find(
+        file =>
+          file.endsWith('.mp4') &&
+          (file.includes('animation') || file.includes('CircleToSquare') || file.includes('Scene'))
+      );
 
       if (!videoFile) {
-        throw new Error('No video file found');
+        // If no specific file found, look for any MP4 file
+        const anyMp4 = files.find(file => file.endsWith('.mp4'));
+        if (anyMp4) {
+          logger.info('Found MP4 file with different naming pattern', {
+            foundFile: anyMp4,
+            allFiles: files,
+          });
+          return path.join(outputDir, anyMp4);
+        }
+
+        throw new Error(`No video file found. Available files: ${files.join(', ')}`);
       }
 
       return path.join(outputDir, videoFile);
@@ -621,5 +685,18 @@ export class ManimRendererService {
         resolve(false);
       });
     });
+  }
+
+  /**
+   * Check if the current process is running inside a Docker container.
+   * This is a heuristic and might not be 100% accurate.
+   */
+  private isRunningInDockerContainer(): boolean {
+    // Check if the process is running inside a Docker container
+    // This is a heuristic and might not be 100% accurate.
+    // A more robust check would involve inspecting Docker socket permissions.
+    // For now, we'll assume if DOCKER_HOST is set, we're in a container.
+    // This is a simplification and might need refinement based on actual Docker setup.
+    return !!process.env.DOCKER_HOST;
   }
 }

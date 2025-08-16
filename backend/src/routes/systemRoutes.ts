@@ -45,4 +45,11 @@ router.get(
   systemController.getSystemResources.bind(systemController)
 );
 
+// Check directory permissions and Docker access
+router.get(
+  '/permissions',
+  systemRateLimit,
+  systemController.checkPermissions.bind(systemController)
+);
+
 export default router;

@@ -6,13 +6,13 @@ services:
     image: redis:7-alpine
     container_name: mlanim-redis
     ports:
-      - "6379:6379"
+      - '6379:6379'
     volumes:
       - redis_data:/data
     command: redis-server --appendonly yes
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ['CMD', 'redis-cli', 'ping']
       interval: 30s
       timeout: 10s
       retries: 3
@@ -24,23 +24,27 @@ services:
       dockerfile: Dockerfile
     container_name: mlanim-backend
     ports:
-      - "3001:3001"
+      - '3001:3001'
     environment:
       - NODE_ENV=development
       - PORT=3001
       - REDIS_URL=redis://redis:6379
       - GEMINI_API_KEY=${GEMINI_API_KEY}
       - OUTPUT_DIR=./outputs
+      - BACKEND_UID=1001
+      - BACKEND_GID=1001
+      - DOCKER_HOST=unix:///var/run/docker.sock
     volumes:
-      - ./outputs:/app/outputs
-      - ./temp:/app/temp
-      - ./logs:/app/logs
+      - ./outputs:/app/outputs:rw
+      - ./temp:/app/temp:rw
+      - ./logs:/app/logs:rw
+      - /var/run/docker.sock:/var/run/docker.sock:rw
     depends_on:
       redis:
         condition: service_healthy
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:3001/health"]
+      test: ['CMD', 'curl', '-f', 'http://localhost:3001/health']
       interval: 30s
       timeout: 10s
       retries: 3
@@ -52,14 +56,14 @@ services:
       dockerfile: Dockerfile
     container_name: mlanim-frontend
     ports:
-      - "3000:3000"
+      - '3000:3000'
     environment:
       - NODE_ENV=development
     depends_on:
       - backend
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:3000"]
+      test: ['CMD', 'curl', '-f', 'http://localhost:3000']
       interval: 30s
       timeout: 10s
       retries: 3

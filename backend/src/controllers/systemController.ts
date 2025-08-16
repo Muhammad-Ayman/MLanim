@@ -1,8 +1,32 @@
 import { Request, Response } from 'express';
 import { spawn } from 'child_process';
+import { promises as fs } from 'fs';
+import path from 'path';
 import { logger } from '../utils/logger';
 
 export class SystemController {
+  /**
+   * Check directory permissions and Docker access
+   */
+  async checkPermissions(req: Request, res: Response): Promise<void> {
+    try {
+      const permissionCheck = await this.performPermissionCheck();
+
+      res.status(200).json({
+        permissions: permissionCheck,
+        message: 'Permission check completed',
+        timestamp: new Date().toISOString(),
+      });
+    } catch (error) {
+      logger.error('Failed to check permissions', { error });
+      res.status(500).json({
+        message: 'Failed to check permissions',
+        code: 'PERMISSION_CHECK_FAILED',
+        details: error instanceof Error ? error.message : 'Unknown error',
+      });
+    }
+  }
+
   /**
    * Get all Docker containers
    */
@@ -259,5 +283,66 @@ export class SystemController {
         reject(new Error(`Docker stats error: ${error.message}`));
       });
     });
+  }
+
+  /**
+   * Perform permission check for Docker and system directories
+   */
+  private async performPermissionCheck(): Promise<any> {
+    const results: any = {};
+
+    // Check Docker socket permission
+    const dockerSocketPath = '/var/run/docker.sock';
+    results.dockerSocket = {
+      path: dockerSocketPath,
+      exists: await fs
+        .access(dockerSocketPath)
+        .then(() => true)
+        .catch(() => false),
+      readable: await fs
+        .access(dockerSocketPath)
+        .then(() => true)
+        .catch(() => false),
+      writable: await fs
+        .access(dockerSocketPath)
+        .then(() => true)
+        .catch(() => false),
+    };
+
+    // Check Docker executable permission
+    const dockerExecutable = 'docker';
+    results.dockerExecutable = {
+      path: dockerExecutable,
+      exists: await fs
+        .access(dockerExecutable)
+        .then(() => true)
+        .catch(() => false),
+      executable: await fs
+        .access(dockerExecutable)
+        .then(() => true)
+        .catch(() => false),
+    };
+
+    // Check system directories (e.g., /var/lib/docker, /var/run)
+    const systemDirs = ['/var/lib/docker', '/var/run'];
+    for (const dir of systemDirs) {
+      results[dir] = {
+        path: dir,
+        exists: await fs
+          .access(dir)
+          .then(() => true)
+          .catch(() => false),
+        readable: await fs
+          .access(dir)
+          .then(() => true)
+          .catch(() => false),
+        writable: await fs
+          .access(dir)
+          .then(() => true)
+          .catch(() => false),
+      };
+    }
+
+    return results;
   }
 }

@@ -1,9 +1,10 @@
 FROM node:18-alpine
 
-# Install system dependencies
+# Install system dependencies including Docker CLI
 RUN apk add --no-cache \
     curl \
     bash \
+    docker-cli \
     && rm -rf /var/cache/apk/*
 
 # Set working directory
