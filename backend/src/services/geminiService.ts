@@ -103,6 +103,109 @@ User prompt: ${prompt}`;
   }
 
   /**
+   * Regenerate Manim code when the original code fails, using error context
+   */
+  async regenerateManimCode(
+    originalPrompt: string,
+    failedCode: string,
+    error: string,
+    regenerationCount: number = 1
+  ): Promise<GeminiResponse> {
+    try {
+      logger.info('Regenerating Manim code due to failure', {
+        originalPrompt: originalPrompt.substring(0, 100),
+        error: error.substring(0, 200),
+        regenerationCount,
+      });
+
+      // Test API connection first
+      await this.testApiConnection();
+
+      const systemPrompt = `You are an expert in mathematical animations and the Manim library. 
+The previous code generation failed with an error. Please analyze the error and generate corrected code.
+
+ORIGINAL PROMPT: ${originalPrompt}
+
+FAILED CODE:
+\`\`\`python
+${failedCode}
+\`\`\`
+
+ERROR MESSAGE: ${error}
+
+INSTRUCTIONS:
+1. Analyze the error message carefully
+2. Identify what went wrong in the failed code
+3. Fix the specific issues that caused the error
+4. Generate corrected Python code using the manimcommunity/manim package
+5. Ensure the corrected code addresses the specific error that occurred
+6. Keep the same animation concept but fix the implementation issues
+
+Validation rules:
+- Imports: use only "from manim import *" plus standard library modules when needed
+- Must define exactly one Scene subclass with a construct(self) method
+- Do NOT invent helpers or functions that don't exist in manimcommunity/manim or the Python standard library
+- Use clear and meaningful variable names
+- Add concise comments explaining the fixes made
+- Keep animations simple but visually engaging
+- Ensure the script is complete, runnable, and will render without the previous error
+- Output ONLY the corrected Python code, no markdown or explanations
+
+This is regeneration attempt #${regenerationCount}. Make sure to fix the specific error that occurred.`;
+
+      const result = await this.model.generateContent(systemPrompt);
+      const response = await result.response;
+      const text = response.text();
+
+      // Log the regeneration response for debugging
+      logger.info('Gemini regeneration response received', {
+        originalPrompt: originalPrompt.substring(0, 100),
+        error: error.substring(0, 200),
+        responseLength: text.length,
+        regenerationCount,
+      });
+
+      // Clean up the response to extract just the code
+      const code = this.extractCodeFromResponse(text);
+
+      logger.info('Code regeneration completed', {
+        originalPrompt: originalPrompt.substring(0, 100),
+        extractedCodeLength: code ? code.length : 0,
+        regenerationCount,
+      });
+
+      return {
+        code,
+        explanation: `Regenerated Manim code (attempt #${regenerationCount}) to fix error: ${error.substring(0, 100)}`,
+      };
+    } catch (error) {
+      logger.error('Error regenerating Manim code', {
+        error,
+        originalPrompt: originalPrompt.substring(0, 100),
+        failedCode: failedCode.substring(0, 200),
+        regenerationCount,
+      });
+
+      // Provide more specific error messages for regeneration
+      if (error instanceof Error) {
+        if (error.message.includes('API key')) {
+          throw new Error('Invalid or expired Gemini API key. Please check your configuration.');
+        } else if (error.message.includes('model') || error.message.includes('404')) {
+          throw new Error(
+            'Gemini model not available. Please check your API access and model availability.'
+          );
+        } else if (error.message.includes('quota') || error.message.includes('rate limit')) {
+          throw new Error('API quota exceeded or rate limited. Please try again later.');
+        } else {
+          throw new Error(`Failed to regenerate Manim code: ${error.message}`);
+        }
+      } else {
+        throw new Error('Failed to regenerate Manim code: Unknown error occurred');
+      }
+    }
+  }
+
+  /**
    * Test API connection and model availability
    */
   private async testApiConnection(): Promise<void> {

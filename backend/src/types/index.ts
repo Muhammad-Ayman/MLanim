@@ -24,6 +24,20 @@ export interface GeminiResponse {
   explanation?: string;
 }
 
+export interface CodeRegenerationRequest {
+  originalPrompt: string;
+  failedCode: string;
+  error: string;
+  jobId: string;
+}
+
+export interface CodeRegenerationResponse {
+  newCode: string;
+  explanation: string;
+  originalError: string;
+  regenerationCount: number;
+}
+
 export interface RenderJob {
   id: string;
   prompt: string;
@@ -33,6 +47,8 @@ export interface RenderJob {
   error?: string;
   createdAt: Date;
   updatedAt: Date;
+  regenerationCount?: number;
+  originalJobId?: string;
 }
 
 export interface ApiError {

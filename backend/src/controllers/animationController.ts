@@ -574,4 +574,122 @@ export class AnimationController {
       });
     }
   }
+
+  /**
+   * Manually regenerate code for a failed job
+   */
+  async regenerateCode(
+    req: Request<{ id: string }>,
+    res: Response<{ message: string; newJobId?: string; error?: string } | ApiError>
+  ): Promise<void> {
+    try {
+      const { id } = req.params;
+
+      if (!id || typeof id !== 'string') {
+        res.status(400).json({
+          message: 'Valid job ID is required',
+          code: 'INVALID_JOB_ID',
+        });
+        return;
+      }
+
+      logger.info('Manual code regeneration requested', { jobId: id });
+
+      // Attempt to regenerate code and retry
+      const newJobId = await this.jobQueueService.regenerateCodeAndRetry(id);
+
+      if (newJobId) {
+        logger.info('Manual code regeneration successful', {
+          originalJobId: id,
+          newJobId,
+        });
+
+        res.status(200).json({
+          message: 'Code regenerated successfully. New job created with corrected code.',
+          newJobId,
+        });
+      } else {
+        logger.warn('Manual code regeneration failed', { jobId: id });
+
+        res.status(400).json({
+          message:
+            'Code regeneration failed. The job may not be in a failed state, or maximum regeneration attempts have been reached.',
+          code: 'REGENERATION_FAILED',
+        });
+      }
+    } catch (error) {
+      logger.error('Error in regenerateCode controller', { error, jobId: req.params.id });
+
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
+      res.status(500).json({
+        message: 'Failed to regenerate code',
+        code: 'REGENERATION_ERROR',
+        details: errorMessage,
+      });
+    }
+  }
+
+  /**
+   * Automatically regenerate code for all failed jobs
+   */
+  async regenerateAllFailedJobs(
+    req: Request,
+    res: Response<{ message: string; regeneratedJobs: string[]; failedJobs: string[] } | ApiError>
+  ): Promise<void> {
+    try {
+      logger.info('Automatic regeneration of all failed jobs requested');
+
+      // Get all failed jobs
+      const allJobs = await this.jobQueueService.getAllJobs();
+      const failedJobs = allJobs.filter(job => job.status === 'error');
+
+      if (failedJobs.length === 0) {
+        res.status(200).json({
+          message: 'No failed jobs found to regenerate',
+          regeneratedJobs: [],
+          failedJobs: [],
+        });
+        return;
+      }
+
+      const regeneratedJobs: string[] = [];
+      const failedRegenerations: string[] = [];
+
+      // Attempt to regenerate each failed job
+      for (const failedJob of failedJobs) {
+        try {
+          const newJobId = await this.jobQueueService.regenerateCodeAndRetry(failedJob.id);
+          if (newJobId) {
+            regeneratedJobs.push(failedJob.id);
+          } else {
+            failedRegenerations.push(failedJob.id);
+          }
+        } catch (error) {
+          logger.error('Failed to regenerate job', { jobId: failedJob.id, error });
+          failedRegenerations.push(failedJob.id);
+        }
+      }
+
+      logger.info('Bulk code regeneration completed', {
+        totalFailedJobs: failedJobs.length,
+        successfullyRegenerated: regeneratedJobs.length,
+        failedRegenerations: failedRegenerations.length,
+      });
+
+      res.status(200).json({
+        message: `Code regeneration completed. ${regeneratedJobs.length} jobs regenerated, ${failedRegenerations.length} failed.`,
+        regeneratedJobs,
+        failedJobs: failedRegenerations,
+      });
+    } catch (error) {
+      logger.error('Error in regenerateAllFailedJobs controller', { error });
+
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
+      res.status(500).json({
+        message: 'Failed to regenerate failed jobs',
+        code: 'BULK_REGENERATION_ERROR',
+        details: errorMessage,
+      });
+    }
+  }
 }

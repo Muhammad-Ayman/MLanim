@@ -406,6 +406,14 @@ export class JobQueueService {
         logger.error('Job failed', { jobId: job.id, error: err.message });
         // Clean up any stuck Docker containers
         this.cleanupStuckContainers(job.id.toString());
+
+        // Automatically attempt code regeneration for failed jobs
+        this.handleFailedJob(job.id.toString(), err).catch(error => {
+          logger.error('Failed to handle failed job for regeneration', {
+            jobId: job.id,
+            error: error instanceof Error ? error.message : error,
+          });
+        });
       } else {
         logger.error('Job failed with unknown job', { error: err.message });
       }
@@ -681,100 +689,175 @@ export class JobQueueService {
       }
 
       const state = await job.getState();
-      const progress = (job.progress as number) || 0;
       const data = job.data;
       const returnValue = job.returnvalue;
       const failedReason = job.failedReason;
-
-      // Get queue statistics
-      const waitingCount = await this.queue.getWaitingCount();
-      const activeCount = await this.queue.getActiveCount();
-      const completedCount = await this.queue.getCompletedCount();
-      const failedCount = await this.queue.getFailedCount();
-
-      // Get worker information
-      const workerInfo = {
-        isActive: this.worker.isRunning(),
-        workerId: this.worker.id,
-        concurrency: this.worker.concurrency,
-      };
-
-      // Get Redis connection status
-      const redisStatus = {
-        isConnected: this.redis.status === 'ready',
-        status: this.redis.status,
-        host: this.redis.options.host,
-        port: this.redis.options.port,
-      };
-
-      // Get Docker container status for this job
-      let dockerInfo = null;
-      try {
-        const { exec } = require('child_process');
-        const util = require('util');
-        const execAsync = util.promisify(exec);
-
-        const { stdout } = await execAsync(
-          `docker ps -a --filter "name=mlanim-${jobId}" --format "{{.ID}} {{.Names}} {{.Status}} {{.Image}}"`
-        );
-
-        if (stdout.trim()) {
-          dockerInfo = stdout
-            .trim()
-            .split('\n')
-            .map((line: string) => {
-              const [id, name, status, image] = line.split(' ');
-              return { id, name, status, image };
-            });
-        }
-      } catch (dockerError) {
-        dockerInfo = {
-          error: dockerError instanceof Error ? dockerError.message : 'Unknown Docker error',
-        };
-      }
-
-      logger.debug('Comprehensive job debug info', {
-        jobId,
-        state,
-        progress,
-        progressType: typeof progress,
-        hasData: !!data,
-        dataKeys: data ? Object.keys(data) : [],
-        hasReturnValue: !!returnValue,
-        returnValueKeys: returnValue ? Object.keys(returnValue) : [],
-        failedReason,
-        queueStats: { waitingCount, activeCount, completedCount, failedCount },
-        workerInfo,
-        redisStatus,
-        dockerInfo,
-      });
+      const attemptsMade = job.attemptsMade;
+      const processedOn = job.processedOn;
+      const finishedOn = job.finishedOn;
 
       return {
         jobId,
         state,
-        progress,
-        progressType: typeof progress,
         data,
         returnValue,
         failedReason,
+        attemptsMade,
+        processedOn: processedOn ? new Date(processedOn) : null,
+        finishedOn: finishedOn ? new Date(finishedOn) : null,
         timestamp: job.timestamp,
-        queueStats: { waitingCount, activeCount, completedCount, failedCount },
-        workerInfo,
-        redisStatus,
-        dockerInfo,
-        // Additional debugging info
-        jobKeys: Object.keys(job),
-        jobMethods: Object.getOwnPropertyNames(Object.getPrototypeOf(job)),
-        createdAt: job.timestamp,
-        processedOn: job.processedOn,
-        finishedOn: job.finishedOn,
-        attemptsMade: job.attemptsMade,
-        delay: job.delay,
-        priority: job.priority,
       };
     } catch (error) {
       logger.error('Failed to get job debug info', { jobId, error });
       throw error;
+    }
+  }
+
+  /**
+   * Automatically regenerate code when a job fails and retry rendering
+   */
+  async regenerateCodeAndRetry(
+    jobId: string,
+    maxRegenerations: number = 3
+  ): Promise<string | null> {
+    try {
+      const job = await this.queue.getJob(jobId);
+      if (!job) {
+        logger.warn('Job not found for code regeneration', { jobId });
+        return null;
+      }
+
+      const state = await job.getState();
+      if (state !== 'failed') {
+        logger.info('Job is not in failed state, skipping regeneration', { jobId, state });
+        return null;
+      }
+
+      const failedReason = job.failedReason;
+      const originalPrompt = job.data.prompt;
+      const failedCode = job.data.code;
+
+      if (!failedReason || !originalPrompt || !failedCode) {
+        logger.warn('Missing required data for code regeneration', {
+          jobId,
+          hasFailedReason: !!failedReason,
+          hasPrompt: !!originalPrompt,
+          hasCode: !!failedCode,
+        });
+        return null;
+      }
+
+      // Check if we've already tried regenerating too many times
+      const regenerationCount = job.data.regenerationCount || 0;
+      if (regenerationCount >= maxRegenerations) {
+        logger.warn('Maximum regeneration attempts reached', {
+          jobId,
+          regenerationCount,
+          maxRegenerations,
+        });
+        return null;
+      }
+
+      logger.info('Starting automatic code regeneration', {
+        jobId,
+        originalPrompt: originalPrompt.substring(0, 100),
+        error: failedReason.substring(0, 200),
+        regenerationCount: regenerationCount + 1,
+        maxRegenerations,
+      });
+
+      // Import GeminiService here to avoid circular dependencies
+      const { GeminiService } = await import('./geminiService');
+      const geminiService = new GeminiService();
+
+      // Regenerate code with error context
+      const regeneratedCode = await geminiService.regenerateManimCode(
+        originalPrompt,
+        failedCode,
+        failedReason,
+        regenerationCount + 1
+      );
+
+      // Validate the regenerated code
+      if (!geminiService.validateGeneratedCode(regeneratedCode.code)) {
+        logger.warn('Regenerated code failed validation', {
+          jobId,
+          regenerationCount: regenerationCount + 1,
+        });
+        return null;
+      }
+
+      // Create a new job with the regenerated code
+      const newJobId = await this.addJob({
+        prompt: originalPrompt,
+        code: regeneratedCode.code,
+        outputPath: undefined,
+        error: undefined,
+        regenerationCount: regenerationCount + 1,
+        originalJobId: jobId, // Track the original failed job
+      });
+
+      logger.info('Code regeneration successful, new job created', {
+        originalJobId: jobId,
+        newJobId,
+        regenerationCount: regenerationCount + 1,
+        explanation: regeneratedCode.explanation,
+      });
+
+      return newJobId;
+    } catch (error) {
+      logger.error('Failed to regenerate code and retry', { jobId, error });
+      return null;
+    }
+  }
+
+  /**
+   * Handle a failed job by attempting automatic code regeneration
+   */
+  private async handleFailedJob(jobId: string, error: Error): Promise<void> {
+    try {
+      logger.info('Handling failed job for automatic regeneration', {
+        jobId,
+        error: error.message,
+      });
+
+      // Wait a bit before attempting regeneration to ensure the job state is properly set
+      await new Promise(resolve => setTimeout(resolve, 2000));
+
+      // Check if the job is actually in a failed state
+      const job = await this.queue.getJob(jobId);
+      if (!job) {
+        logger.warn('Job not found during failed job handling', { jobId });
+        return;
+      }
+
+      const state = await job.getState();
+      if (state !== 'failed') {
+        logger.info('Job is no longer in failed state, skipping regeneration', { jobId, state });
+        return;
+      }
+
+      // Attempt automatic code regeneration
+      const newJobId = await this.regenerateCodeAndRetry(jobId);
+
+      if (newJobId) {
+        logger.info('Automatic code regeneration successful', {
+          originalJobId: jobId,
+          newJobId,
+          error: error.message.substring(0, 200),
+        });
+      } else {
+        logger.info('Automatic code regeneration not possible or failed', {
+          jobId,
+          error: error.message.substring(0, 200),
+        });
+      }
+    } catch (handleError) {
+      logger.error('Error in handleFailedJob', {
+        jobId,
+        originalError: error.message,
+        handleError: handleError instanceof Error ? handleError.message : handleError,
+      });
     }
   }
 

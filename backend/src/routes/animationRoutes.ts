@@ -131,6 +131,38 @@ router.post(
   animationController.resetJobProgress.bind(animationController)
 );
 
+// Regenerate code for a failed job
+router.post(
+  '/regenerate/:id',
+  rateLimit({
+    windowMs: 5 * 60 * 1000, // 5 minutes
+    max: 5, // Limit each IP to 5 regeneration requests per 5 minutes
+    message: {
+      message: 'Too many code regeneration requests from this IP, please try again later.',
+      code: 'RATE_LIMIT_EXCEEDED',
+    },
+    standardHeaders: true,
+    legacyHeaders: false,
+  }),
+  animationController.regenerateCode.bind(animationController)
+);
+
+// Regenerate code for all failed jobs
+router.post(
+  '/regenerate-all-failed',
+  rateLimit({
+    windowMs: 10 * 60 * 1000, // 10 minutes
+    max: 3, // Limit each IP to 3 bulk regeneration requests per 10 minutes
+    message: {
+      message: 'Too many bulk regeneration requests from this IP, please try again later.',
+      code: 'RATE_LIMIT_EXCEEDED',
+    },
+    standardHeaders: true,
+    legacyHeaders: false,
+  }),
+  animationController.regenerateAllFailedJobs.bind(animationController)
+);
+
 // Development-only endpoint for testing (no rate limiting)
 if (process.env.NODE_ENV === 'development') {
   router.post('/kill/:id/dev', animationController.forceKillJob.bind(animationController));
