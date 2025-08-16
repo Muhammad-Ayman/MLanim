@@ -440,6 +440,15 @@ const ProcessManager: React.FC = () => {
                   {process.status === 'pending' && (
                     <span className="ml-2 text-yellow-600">⏳ Queued</span>
                   )}
+                  {process.status === 'running' && (
+                    <span className="ml-2 text-blue-600">🔄 Processing</span>
+                  )}
+                  {process.status === 'done' && (
+                    <span className="ml-2 text-green-600">✅ Complete</span>
+                  )}
+                  {process.status === 'error' && (
+                    <span className="ml-2 text-red-600">❌ Failed</span>
+                  )}
                 </div>
               )}
 

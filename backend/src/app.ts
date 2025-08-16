@@ -91,7 +91,7 @@ export class App {
    */
   private setupRoutes(): void {
     // Health check endpoint
-    this.app.get('/health', (req, res) => {
+    this.app.get('/api/health', (req, res) => {
       res.status(200).json({
         status: 'ok',
         timestamp: new Date().toISOString(),

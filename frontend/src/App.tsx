@@ -105,7 +105,24 @@ function App() {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      <Header activeTab={activeTab} onTabChange={setActiveTab} />
+      <Header
+        activeTab={activeTab}
+        onTabChange={setActiveTab}
+        currentOperation={{
+          status: jobStatus?.status || null,
+          progress: jobStatus?.progress,
+          currentOperation:
+            jobStatus?.status === 'running'
+              ? 'Rendering animation...'
+              : jobStatus?.status === 'pending'
+                ? 'Waiting in queue...'
+                : jobStatus?.status === 'done'
+                  ? 'Animation complete'
+                  : jobStatus?.status === 'error'
+                    ? 'Generation failed'
+                    : undefined,
+        }}
+      />
 
       {/* Notification */}
       {notification && (

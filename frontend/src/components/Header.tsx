@@ -1,13 +1,19 @@
 import React from 'react';
 import { Sparkles, Github, ExternalLink, Play, Settings } from 'lucide-react';
 import { HealthCheck } from './HealthCheck';
+import { OperationStatus } from './OperationStatus';
 
 interface HeaderProps {
   activeTab: 'generator' | 'processes';
   onTabChange: (tab: 'generator' | 'processes') => void;
+  currentOperation?: {
+    status: 'pending' | 'running' | 'done' | 'error' | null;
+    progress?: number;
+    currentOperation?: string;
+  };
 }
 
-export const Header: React.FC<HeaderProps> = ({ activeTab, onTabChange }) => {
+export const Header: React.FC<HeaderProps> = ({ activeTab, onTabChange, currentOperation }) => {
   return (
     <header className="bg-white border-b border-gray-200 sticky top-0 z-50">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
@@ -49,6 +55,16 @@ export const Header: React.FC<HeaderProps> = ({ activeTab, onTabChange }) => {
               <span>Processes</span>
             </button>
           </div>
+
+          {/* Current Operation Status */}
+          {currentOperation?.status && (
+            <OperationStatus
+              status={currentOperation.status}
+              progress={currentOperation.progress}
+              currentOperation={currentOperation.currentOperation}
+              isCompact={true}
+            />
+          )}
 
           {/* Health check and external links */}
           <div className="flex items-center gap-4">
