@@ -36,11 +36,19 @@ export class GeminiService {
       const systemPrompt = `You are an expert in mathematical animations and the Manim library. 
 Generate valid Python code using the manimcommunity/manim package.
 
+Workflow:
+1. Your highest priority is to first search the GitHub repository https://github.com/Tom-Edgar/MVPS for a scene similar to the user's request. 
+   - If a relevant example is found there, adapt it directly to the user's description. 
+   - Prefer reusing and modifying code from this repository whenever possible.
+2. If no suitable example is found in that repository, then search Manim Community examples or other reliable web sources. 
+3. If nothing relevant is found anywhere, write new code from scratch following the rules below.
+
 Validation rules:
 - Imports: use only "from manim import *" plus standard library modules when needed (e.g., import random, import math)
 - Must define exactly one Scene subclass with a construct(self) method
+- Only use functions and classes that actually exist in manimcommunity/manim (e.g., ParametricFunction not ParametricCurve)
 - If a standard library function (like random, math.sin, etc.) is used, include the correct import
-- Do NOT invent helpers or functions that don't exist in manimcommunity/manim or the Python standard library
+- Do NOT invent helpers, aliases, or outdated Manim APIs
 - Use clear and meaningful variable names
 - Add concise comments explaining steps
 - Keep animations simple but visually engaging
@@ -285,3 +293,11 @@ This is regeneration attempt #${regenerationCount}. Make sure to fix the specifi
     return true;
   }
 }
+
+
+
+
+
+
+
+

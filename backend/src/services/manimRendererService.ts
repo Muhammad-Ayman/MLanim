@@ -18,7 +18,7 @@ interface ManimOutput {
 
 export class ManimRendererService {
   private readonly dockerImage = 'manimcommunity/manim:latest';
-  private readonly containerTimeout = 300000; // 5 minutes - increased for complex animations
+  private readonly containerTimeout = 3000000; // 5 minutes - increased for complex animations
   private readonly maxRetries = 2; // Retry failed renders
 
   /**
