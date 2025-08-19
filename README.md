@@ -2,7 +2,7 @@
 
 MLanim is a full-stack web application that generates beautiful mathematical animations from natural language descriptions using Google Gemini AI and the Manim animation library.
 
-![MLanim Demo](imgs/MLanim.mp4)
+![MLanim Demo](imgs/MLanim.gif)
 
 ## 🚀 Features
 
