@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { Header } from './components/Header';
 import { PromptInput } from './components/PromptInput';
 import { StatusDisplay } from './components/StatusDisplay';
@@ -18,6 +18,8 @@ function App() {
     type: 'success' | 'error';
     message: string;
   } | null>(null);
+  const errorWaitUntilRef = useRef<number | null>(null);
+  const errorWaitJobRef = useRef<string | null>(null);
 
   // Polling interval for job status
   const POLLING_INTERVAL = 3000; // 3 seconds
@@ -29,12 +31,16 @@ function App() {
   }, []);
 
   // Handle prompt submission
-  const handlePromptSubmit = async (prompt: string) => {
+  const handlePromptSubmit = async (
+    prompt: string,
+    provider?: 'gemini' | 'together',
+    model?: string
+  ) => {
     try {
       setIsLoading(true);
       setJobStatus(null);
 
-      const response = await AnimationApiService.generateAnimation(prompt);
+      const response = await AnimationApiService.generateAnimation(prompt, provider, model);
       setCurrentJobId(response.jobId);
 
       // Store the generated code
@@ -68,14 +74,38 @@ function App() {
         const status = await AnimationApiService.getJobStatus(currentJobId);
         setJobStatus(status);
 
+        // If backend sends updated/generated code (e.g., after regeneration), sync it
+        setGeneratedCode(prev => (status.code && status.code !== prev ? status.code : prev));
+
         // Stop polling if job is complete or failed
         if (status.status === 'done' || status.status === 'error') {
+          // If failed but we have a successor job, follow it
+          if (status.status === 'error' && status.nextJobId) {
+            setCurrentJobId(status.nextJobId);
+            errorWaitUntilRef.current = null;
+            errorWaitJobRef.current = null;
+            return;
+          }
+          // If failed without successor yet, wait briefly to see if backend posts nextJobId mapping
+          if (status.status === 'error' && !status.nextJobId) {
+            const now = Date.now();
+            if (errorWaitJobRef.current !== currentJobId) {
+              errorWaitJobRef.current = currentJobId;
+              errorWaitUntilRef.current = now + 5000; // wait up to 5s
+              return; // keep polling
+            }
+            if (errorWaitUntilRef.current && now < errorWaitUntilRef.current) {
+              return; // keep polling
+            }
+          }
           setCurrentJobId(null);
           if (status.status === 'done') {
             showNotification('success', 'Animation generated successfully!');
           } else {
             showNotification('error', 'Animation generation failed');
           }
+          errorWaitUntilRef.current = null;
+          errorWaitJobRef.current = null;
         }
       } catch (error) {
         console.error('Failed to poll job status:', error);

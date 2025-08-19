@@ -1,5 +1,7 @@
 export interface GenerateRequest {
   prompt: string;
+  provider?: 'gemini' | 'together';
+  model?: string;
 }
 
 export interface GenerateResponse {
@@ -15,8 +17,13 @@ export interface JobStatus {
   videoUrl?: string;
   error?: string;
   code?: string;
+  regenerationCount?: number;
+  originalJobId?: string;
+  provider?: 'gemini' | 'together';
+  model?: string;
   createdAt: string;
   updatedAt: string;
+  nextJobId?: string;
 }
 
 export interface ApiError {

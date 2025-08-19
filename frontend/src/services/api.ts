@@ -38,10 +38,16 @@ export class AnimationApiService {
   /**
    * Generate animation from prompt
    */
-  static async generateAnimation(prompt: string): Promise<GenerateResponse> {
+  static async generateAnimation(
+    prompt: string,
+    provider?: 'gemini' | 'together',
+    model?: string
+  ): Promise<GenerateResponse> {
     try {
       const response = await api.post<GenerateResponse>('/animations/generate', {
         prompt,
+        provider,
+        model,
       } as GenerateRequest);
 
       return response.data;

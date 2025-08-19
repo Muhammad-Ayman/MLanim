@@ -1,5 +1,7 @@
 export interface GenerateRequest {
   prompt: string;
+  provider?: 'gemini' | 'together';
+  model?: string;
 }
 
 export interface GenerateResponse {

@@ -4,6 +4,7 @@ import path from 'path';
 import { v4 as uuidv4 } from 'uuid';
 import { config, getOutputPath } from '../config';
 import { logger } from '../utils/logger';
+import { JobLogger } from '../utils/jobLogger';
 
 interface RenderResult {
   outputPath: string;
@@ -19,7 +20,7 @@ interface ManimOutput {
 export class ManimRendererService {
   private readonly dockerImage = 'manimcommunity/manim:latest';
   private readonly containerTimeout = 3000000; // 5 minutes - increased for complex animations
-  private readonly maxRetries = 2; // Retry failed renders
+  private readonly maxRetries = 1; // Let LLM regeneration handle subsequent attempts
 
   /**
    * Render a Manim animation using Docker for safety
@@ -46,6 +47,7 @@ export class ManimRendererService {
       // Write the Manim code to a temporary file
       const codeFilePath = path.join(tempDir, 'animation.py');
       await fs.writeFile(codeFilePath, code, 'utf8');
+      await JobLogger.append(jobId, 'Wrote code to temp file', { codeFilePath });
 
       // Try rendering with retry logic
       let lastError: Error | null = null;
@@ -283,6 +285,7 @@ export class ManimRendererService {
       dockerProcess.stdout?.on('data', data => {
         const output = data.toString();
         stdout += output;
+        JobLogger.append(jobId, 'stdout', { chunk: output.substring(0, 1000) }).catch(() => {});
 
         // Parse Manim progress information with more comprehensive patterns
         const progressMatch = output.match(/Rendering\s+(\d+)\/(\d+)\s+frames/);
@@ -417,6 +420,7 @@ export class ManimRendererService {
       dockerProcess.stderr?.on('data', data => {
         const output = data.toString();
         stderr += output;
+        JobLogger.append(jobId, 'stderr', { chunk: output.substring(0, 1000) }).catch(() => {});
 
         // Send stderr output
         if (onOutput) {
@@ -477,6 +481,10 @@ export class ManimRendererService {
             errorMessage += ` (Attempt ${attempt}/${this.maxRetries})`;
           }
 
+          await JobLogger.append(jobId, 'Render error', {
+            errorMessage,
+            stderr: stderr.substring(0, 4000),
+          });
           reject(new Error(`${errorMessage}\n\nFull error: ${stderr}`));
         }
       });

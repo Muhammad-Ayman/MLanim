@@ -1,15 +1,19 @@
 import { Request, Response } from 'express';
 import { GeminiService } from '../services/geminiService';
+import { TogetherService } from '../services/togetherService';
 import { JobQueueService } from '../services/jobQueueService';
 import { logger } from '../utils/logger';
 import { GenerateRequest, GenerateResponse, JobStatus, ApiError } from '../types';
+import { JobLogger } from '../utils/jobLogger';
 
 export class AnimationController {
   private geminiService: GeminiService;
   private jobQueueService: JobQueueService;
+  private togetherService?: TogetherService;
 
   constructor() {
     this.geminiService = new GeminiService();
+    this.togetherService = new TogetherService();
     this.jobQueueService = new JobQueueService();
   }
 
@@ -21,7 +25,7 @@ export class AnimationController {
     res: Response<GenerateResponse | ApiError>
   ): Promise<void> {
     try {
-      const { prompt } = req.body;
+      const { prompt, provider, model } = req.body;
 
       // Validate input
       if (!prompt || typeof prompt !== 'string' || prompt.trim().length === 0) {
@@ -45,19 +49,34 @@ export class AnimationController {
         requestId: req.headers['x-request-id'] || 'unknown',
       });
 
-      // Generate Manim code using Gemini
-      const geminiResponse = await this.geminiService.generateManimCode(prompt);
+      // Generate Manim code using selected provider
+      let code: string;
+      const selectedProvider = (provider || 'gemini') as 'gemini' | 'together';
+      if (selectedProvider === 'together' && this.togetherService) {
+        const togetherResp = await this.togetherService.generateManimCode(prompt, model);
+        code = togetherResp.code;
+      } else {
+        const geminiResponse = await this.geminiService.generateManimCode(prompt);
+        code = geminiResponse.code;
+      }
 
       // Log the final code that will be used for rendering
       logger.info('Final Manim code for rendering', {
         prompt: prompt.substring(0, 100),
-        codeLength: geminiResponse.code.length,
-        code: geminiResponse.code,
-        hasCode: !!geminiResponse.code,
+        provider: provider || 'gemini',
+        model: model || null,
+        codeLength: code.length,
+        code,
+        hasCode: !!code,
       });
 
       // Validate the generated code
-      if (!this.geminiService.validateGeneratedCode(geminiResponse.code)) {
+      const isValid =
+        selectedProvider === 'together' && this.togetherService
+          ? this.togetherService.validateGeneratedCode(code)
+          : this.geminiService.validateGeneratedCode(code);
+
+      if (!isValid) {
         logger.warn('Generated code failed validation', { prompt: prompt.substring(0, 100) });
         res.status(400).json({
           message: 'Generated code failed safety validation. Please try a different prompt.',
@@ -69,9 +88,11 @@ export class AnimationController {
       // Add job to the rendering queue and get the actual job ID
       const jobId = await this.jobQueueService.addJob({
         prompt: prompt.trim(),
-        code: geminiResponse.code,
+        code,
         outputPath: undefined,
         error: undefined,
+        provider: selectedProvider,
+        model: model,
       });
 
       logger.info('Animation generation job queued successfully', {
@@ -79,10 +100,17 @@ export class AnimationController {
         prompt: prompt.substring(0, 100),
       });
 
+      // Persist logs and code snapshot
+      await JobLogger.append(jobId, 'Job queued', {
+        provider: selectedProvider,
+        model: model || null,
+      });
+      await JobLogger.saveCode(jobId, code, 'generated');
+
       res.status(201).json({
         jobId,
         message: 'Animation generation started successfully. Use the job ID to check status.',
-        code: geminiResponse.code,
+        code,
       });
     } catch (error) {
       logger.error('Error in generateAnimation controller', { error, body: req.body });
@@ -169,9 +197,25 @@ export class AnimationController {
             : undefined,
         error: job.error,
         code: job.code,
+        regenerationCount: (job as any).regenerationCount,
+        originalJobId: (job as any).originalJobId,
+        provider: (job as any).provider,
+        model: (job as any).model,
         createdAt: job.createdAt,
         updatedAt: job.updatedAt,
       };
+
+      // If this job failed and has a regenerated successor, include it
+      if (job.status === 'error') {
+        try {
+          const nextJobId = await this.jobQueueService.getNextJobId(id);
+          if (nextJobId) {
+            (jobStatus as any).nextJobId = nextJobId;
+          }
+        } catch (_) {
+          // best effort only
+        }
+      }
 
       logger.info('Job status retrieved successfully', {
         jobId: id,

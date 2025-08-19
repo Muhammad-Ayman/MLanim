@@ -4,6 +4,7 @@ import { config } from '../config';
 import { logger } from '../utils/logger';
 import { RenderJob } from '../types';
 import { ManimRendererService } from './manimRendererService';
+import { JobLogger } from '../utils/jobLogger';
 
 export class JobQueueService {
   private queue: Queue;
@@ -26,11 +27,14 @@ export class JobQueueService {
    * Add a new rendering job to the queue
    */
   async addJob(
-    jobData: Omit<RenderJob, 'id' | 'status' | 'createdAt' | 'updatedAt'>
+    jobData: Omit<RenderJob, 'id' | 'status' | 'createdAt' | 'updatedAt'> & {
+      provider?: 'gemini' | 'together';
+      model?: string;
+    }
   ): Promise<string> {
     try {
       const job = await this.queue.add('render', jobData, {
-        attempts: 3,
+        attempts: 1,
         backoff: {
           type: 'exponential',
           delay: 2000,
@@ -42,6 +46,8 @@ export class JobQueueService {
       logger.info('Added new rendering job to queue', {
         jobId: job.id,
         prompt: jobData.prompt.substring(0, 100),
+        provider: jobData.provider || 'gemini',
+        model: jobData.model || null,
       });
 
       return job.id as string;
@@ -165,6 +171,8 @@ export class JobQueueService {
         status: mappedStatus,
         outputPath: job.returnvalue?.outputPath,
         error: failedReason,
+        regenerationCount: job.data.regenerationCount,
+        originalJobId: job.data.originalJobId,
         createdAt: job.timestamp ? new Date(job.timestamp) : new Date(),
         updatedAt: new Date(),
       };
@@ -256,6 +264,7 @@ export class JobQueueService {
       'manim-rendering',
       async (job: Job) => {
         logger.info('Processing rendering job', { jobId: job.id });
+        await JobLogger.append(job.id as string, 'Worker started render');
 
         // Declare progressInterval at function scope so it's accessible in catch block
         let progressInterval: NodeJS.Timeout | undefined;
@@ -376,6 +385,9 @@ export class JobQueueService {
 
           return result;
         } catch (error) {
+          await JobLogger.append(job.id as string, 'Render failed', {
+            error: error instanceof Error ? error.message : String(error),
+          });
           // Ensure progress interval is cleared even on error
           if (progressInterval) {
             clearInterval(progressInterval);
@@ -426,6 +438,32 @@ export class JobQueueService {
     this.queue.on('error', (err: Error) => {
       logger.error('Queue error', { error: err.message });
     });
+  }
+
+  /**
+   * Store mapping from failed job to regenerated job
+   */
+  private async setNextJobId(originalJobId: string, newJobId: string): Promise<void> {
+    try {
+      const key = `job:next:${originalJobId}`;
+      await this.redis.set(key, newJobId, 'EX', 24 * 60 * 60);
+    } catch (error) {
+      logger.warn('Failed to store nextJobId mapping', { originalJobId, newJobId, error });
+    }
+  }
+
+  /**
+   * Retrieve mapping to regenerated job if exists
+   */
+  public async getNextJobId(originalJobId: string): Promise<string | null> {
+    try {
+      const key = `job:next:${originalJobId}`;
+      const next = await this.redis.get(key);
+      return next || null;
+    } catch (error) {
+      logger.warn('Failed to retrieve nextJobId mapping', { originalJobId, error });
+      return null;
+    }
   }
 
   /**
@@ -718,7 +756,7 @@ export class JobQueueService {
    */
   async regenerateCodeAndRetry(
     jobId: string,
-    maxRegenerations: number = 3
+    maxRegenerations: number = 7
   ): Promise<string | null> {
     try {
       const job = await this.queue.getJob(jobId);
@@ -766,20 +804,51 @@ export class JobQueueService {
         maxRegenerations,
       });
 
-      // Import GeminiService here to avoid circular dependencies
+      // Import services here to avoid circular dependencies
       const { GeminiService } = await import('./geminiService');
+      const { TogetherService } = await import('./togetherService');
       const geminiService = new GeminiService();
+      const togetherService = new TogetherService(job.data.model);
 
-      // Regenerate code with error context
-      const regeneratedCode = await geminiService.regenerateManimCode(
-        originalPrompt,
-        failedCode,
-        failedReason,
-        regenerationCount + 1
-      );
+      // Choose provider used for original generation if available
+      const provider = (job.data.provider as 'gemini' | 'together') || 'gemini';
+      const regeneratedCode =
+        provider === 'together'
+          ? await togetherService.regenerateManimCode(
+              originalPrompt,
+              failedCode,
+              failedReason,
+              regenerationCount + 1,
+              job.data.model
+            )
+          : await geminiService.regenerateManimCode(
+              originalPrompt,
+              failedCode,
+              failedReason,
+              regenerationCount + 1
+            );
+
+      // Log and store regenerated code for visibility
+      try {
+        await JobLogger.append(jobId, 'Regenerated code received', {
+          provider,
+          model: job.data.model || null,
+          regenerationCount: regenerationCount + 1,
+        });
+        await JobLogger.saveCode(
+          jobId,
+          regeneratedCode.code,
+          `regenerated_${regenerationCount + 1}`
+        );
+      } catch (_) {}
 
       // Validate the regenerated code
-      if (!geminiService.validateGeneratedCode(regeneratedCode.code)) {
+      const isValid =
+        provider === 'together'
+          ? togetherService.validateGeneratedCode(regeneratedCode.code)
+          : geminiService.validateGeneratedCode(regeneratedCode.code);
+
+      if (!isValid) {
         logger.warn('Regenerated code failed validation', {
           jobId,
           regenerationCount: regenerationCount + 1,
@@ -795,6 +864,8 @@ export class JobQueueService {
         error: undefined,
         regenerationCount: regenerationCount + 1,
         originalJobId: jobId, // Track the original failed job
+        provider,
+        model: job.data.model,
       });
 
       logger.info('Code regeneration successful, new job created', {
@@ -803,6 +874,9 @@ export class JobQueueService {
         regenerationCount: regenerationCount + 1,
         explanation: regeneratedCode.explanation,
       });
+
+      // Store mapping so clients can follow the new job
+      await this.setNextJobId(jobId, newJobId);
 
       return newJobId;
     } catch (error) {

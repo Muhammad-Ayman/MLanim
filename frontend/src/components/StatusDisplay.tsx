@@ -88,6 +88,18 @@ export const StatusDisplay: React.FC<StatusDisplayProps> = ({ jobStatus, onDownl
         currentOperation={currentOperation}
       />
 
+      {/* Retry/regeneration info */}
+      {typeof jobStatus.regenerationCount === 'number' && (
+        <div className="mt-2 text-xs text-gray-600">
+          Attempt: {(jobStatus.regenerationCount || 0) + 1}
+          {jobStatus.provider && <span className="ml-2">Provider: {jobStatus.provider}</span>}
+          {jobStatus.model && <span className="ml-2">Model: {jobStatus.model}</span>}
+          {jobStatus.originalJobId && (
+            <span className="ml-2">Original: {jobStatus.originalJobId}</span>
+          )}
+        </div>
+      )}
+
       {/* Additional details section */}
       <div className="mt-4">
         {/* Queue position indicator for pending jobs */}
