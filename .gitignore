@@ -107,7 +107,7 @@ temp/
 dump.rdb
 
 
-*.mp4
+backend/*.mp4
 
 # TypeScript
 *.tsbuildinfo
